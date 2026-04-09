@@ -1,12 +1,14 @@
-use crate::app::{App, Mode};
+use crate::app::{App, CanvasState, InputAction, Mode};
+use crate::ui::palette as pal;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
+use crate::ui::titlebar;
 use crate::ui::widgets::{draw_elbow_arrow, put_char};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Paragraph},
     Terminal,
 };
 use std::io;
@@ -18,40 +20,12 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
     terminal.draw(|frame| {
         let area = frame.area();
 
-        // ── Border / title ────────────────────────────────────────────────────
-        let (title, title_style) = match &app.mode {
-            Mode::Normal => (
-                " filament  [i insert | x delete | d/D depth | v reparent | n nodes | hjkl nav | HJKL pan | c center | z collapse | q quit] ",
-                Style::default(),
-            ),
-            Mode::Insert { .. } => (
-                " filament — INSERT  [Enter add | Tab indent | Shift+Tab dedent | ←/→ cursor | Esc done] ",
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-            Mode::Confirm { .. } => (
-                " filament — DELETE  [y confirm | n/Esc cancel] ",
-                Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Mode::Reparent { .. } => (
-                " filament — REPARENT  [hjkl navigate | v/Enter confirm | Esc cancel] ",
-                Style::default().fg(Color::Black).bg(Color::Blue).add_modifier(Modifier::BOLD),
-            ),
-            Mode::Nodes { .. } => (
-                " filament — NODES  [hjkl move cursor | n new node | p pick | Esc exit] ",
-                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ),
-            Mode::NodeNew { .. } => (
-                " filament — NEW NODE  [type name | Enter confirm | Esc cancel] ",
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-            Mode::NodePick { .. } => (
-                " filament — PICK  [hjkl move | p place | Esc cancel] ",
-                Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
-            ),
-        };
-
+        // ── Outer frame ───────────────────────────────────────────────────────
         frame.render_widget(
-            Block::default().borders(Borders::ALL).title(Span::styled(title, title_style)),
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(titlebar::border_style(&app.mode))
+                .title(titlebar::build_title(&app.mode)),
             area,
         );
 
@@ -63,9 +37,6 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         };
 
         // ── Bullet lists ──────────────────────────────────────────────────────
-        let prefix_style = Style::default().fg(Color::DarkGray);
-        let arrow_style  = Style::default().fg(Color::DarkGray);
-        let dim_style    = Style::default().fg(Color::DarkGray);
         let mut trail: Vec<bool> = Vec::new();
 
         for (idx, &(id, depth)) in order.iter().enumerate() {
@@ -88,183 +59,184 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 else if node.collapsed { format!("  [+{}]", node.children.len()) }
                 else { String::new() };
 
-            let is_reparent_subj  = matches!(&app.mode, Mode::Reparent { subject, .. } if *subject == id);
-            let is_reparent_cur   = matches!(&app.mode, Mode::Reparent { cursor,  .. } if *cursor  == id);
-            let is_insert_parent  = matches!(&app.mode, Mode::Insert   { parent,  .. } if *parent  == id);
-            let is_confirm_target = matches!(&app.mode, Mode::Confirm  { target      } if *target  == id);
-            let is_pick_origin    = matches!(&app.mode, Mode::NodePick { origin_id, .. } if *origin_id == id);
+            let is_reparent_subj = matches!(&app.mode, Mode::Reparent { subject, .. } if *subject == id);
+            let is_reparent_cur  = matches!(&app.mode, Mode::Reparent { cursor,  .. } if *cursor  == id);
+            let is_insert_parent = matches!(&app.mode,
+                Mode::Input { action: InputAction::InsertChild { parent }, .. } if *parent == id);
+            let is_pick_origin   = matches!(&app.mode,
+                Mode::Canvas { state: CanvasState::Pick { origin_id, .. }, .. } if *origin_id == id);
 
-            let label_style = if is_confirm_target {
-                Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD)
-            } else if is_reparent_subj || is_pick_origin {
-                Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD)
+            let label_style = if is_reparent_subj || is_pick_origin {
+                pal::solid(pal::PICK)
             } else if is_reparent_cur {
-                Style::default().fg(Color::Black).bg(Color::Blue).add_modifier(Modifier::BOLD)
+                pal::solid(pal::REPARENT)
             } else if is_insert_parent {
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
+                pal::solid(pal::INSERT)
             } else if app.has_selection() && id == app.selected {
-                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+                pal::solid(pal::SELECTED)
             } else {
-                Style::default().fg(Color::Cyan)
+                pal::tinted(pal::NODE)
             };
 
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(prefix,             prefix_style),
-                    Span::styled("> ",               arrow_style),
+                    Span::styled(prefix,             Style::default().fg(pal::PREFIX)),
+                    Span::styled("> ",               Style::default().fg(pal::DIM)),
                     Span::styled(node.label.clone(), label_style),
-                    Span::styled(collapse_suffix,    dim_style),
+                    Span::styled(collapse_suffix,    Style::default().fg(pal::DIM)),
                 ])),
                 Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
             );
         }
 
-        // ── Nodes mode cursor ─────────────────────────────────────────────────
-        if let Mode::Nodes { cursor_x, cursor_y } = app.mode {
-            let sx = cursor_x - app.camera_x;
-            let sy = cursor_y - app.camera_y;
+        // ── Canvas cursor ─────────────────────────────────────────────────────
+        if let Mode::Canvas { ref state } = app.mode {
+            let sx = app.cursor_x - app.camera_x;
+            let sy = app.cursor_y - app.camera_y;
             if sx >= 0 && sy >= 0 {
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
-                    put_char(frame, canvas, sx, sy, '╋',
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+                    let (ch, style) = match state {
+                        CanvasState::Pick { .. } => ('⊕', pal::solid(pal::PICK)),
+                        _                        => ('╋', pal::tinted_bold(pal::CANVAS)),
+                    };
+                    put_char(frame, canvas, sx, sy, ch, style);
                 }
             }
         }
 
-        // ── NodeNew inline prompt ─────────────────────────────────────────────
-        if let Mode::NodeNew { cursor_x, cursor_y, buf, text_cursor } = &app.mode {
-            let sx = cursor_x - app.camera_x;
-            let sy = cursor_y - app.camera_y;
-            if sx >= 0 && sy >= 0 {
-                let (sx, sy) = (sx as u16, sy as u16);
-                if sx < canvas.width && sy < canvas.height {
-                    let before = &buf[..*text_cursor];
-                    let cur_char = buf[*text_cursor..].chars().next().unwrap_or(' ');
-                    let after_start = *text_cursor + cur_char.len_utf8();
-                    let after = if after_start <= buf.len() { &buf[after_start..] } else { "" };
-                    frame.render_widget(
-                        Paragraph::new(Line::from(vec![
-                            Span::styled("> ",                 Style::default().fg(Color::Green)),
-                            Span::styled(before.to_string(),   Style::default().fg(Color::Green)),
-                            Span::styled(cur_char.to_string(), Style::default().fg(Color::Black).bg(Color::Green)),
-                            Span::styled(after.to_string(),    Style::default().fg(Color::Green)),
-                        ])),
-                        Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
-                    );
-                }
-            }
-        }
-
-        // ── NodePick arrow + cursor ───────────────────────────────────────────
-        if let Mode::NodePick { cursor_x, cursor_y, origin_x, origin_y, .. } = app.mode {
-            let arrow_style = Style::default().fg(Color::Magenta);
+        // ── Canvas pick arrow ─────────────────────────────────────────────────
+        if let Mode::Canvas {
+            state: CanvasState::Pick { origin_x, origin_y, .. } } = app.mode
+        {
             draw_elbow_arrow(frame, canvas, app.camera_x, app.camera_y,
-                origin_x, origin_y, cursor_x, cursor_y, arrow_style);
-            let sx = cursor_x - app.camera_x;
-            let sy = cursor_y - app.camera_y;
+                origin_x, origin_y, app.cursor_x, app.cursor_y,
+                pal::tinted(pal::PICK));
+        }
+
+        // ── Canvas new-node inline prompt ─────────────────────────────────────
+        if let Mode::Canvas {
+            state: CanvasState::New { ref buf, text_cursor } } = app.mode
+        {
+            let sx = app.cursor_x - app.camera_x;
+            let sy = app.cursor_y - app.camera_y;
             if sx >= 0 && sy >= 0 {
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
-                    put_char(frame, canvas, sx, sy, '⊕',
-                        Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD));
+                    render_input_line(frame, canvas, sx, sy, "> ", buf, text_cursor, pal::INSERT);
                 }
             }
         }
 
-        // ── Inline insert prompt ──────────────────────────────────────────────
-        if let Mode::Insert { parent, buf, cursor } = &app.mode {
-            let parent = *parent;
+        // ── Insert inline prompt ──────────────────────────────────────────────
+        if let Mode::Input { action: InputAction::InsertChild { parent }, ref buf, cursor } = app.mode {
             let subtree = app.collect_subtree(parent);
             let visible = subtree.iter().filter(|&&id| app.nodes[id].row != usize::MAX).count();
-            let insert_wy = app.nodes[parent].world_y + visible as i32;
-            let insert_wx = app.nodes[parent].world_x;
-            let sx = insert_wx - app.camera_x;
-            let sy = insert_wy  - app.camera_y;
+            let wy = app.nodes[parent].world_y + visible as i32;
+            let wx = app.nodes[parent].world_x;
+            let sx = wx - app.camera_x;
+            let sy = wy - app.camera_y;
             if sx >= 0 && sy >= 0 {
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
                     let trail  = compute_insert_trail(&app.nodes, parent);
-                    let prefix = box_prefix(&trail);
-                    let before = &buf[..*cursor];
-                    let cur_char = buf[*cursor..].chars().next().unwrap_or(' ');
-                    let after_start = *cursor + cur_char.len_utf8();
-                    let after = if after_start <= buf.len() { &buf[after_start..] } else { "" };
-                    frame.render_widget(
-                        Paragraph::new(Line::from(vec![
-                            Span::styled(prefix,                  Style::default().fg(Color::DarkGray)),
-                            Span::styled("> ",                    Style::default().fg(Color::Green)),
-                            Span::styled(before.to_string(),      Style::default().fg(Color::Green)),
-                            Span::styled(cur_char.to_string(),    Style::default().fg(Color::Black).bg(Color::Green)),
-                            Span::styled(after.to_string(),       Style::default().fg(Color::Green)),
-                        ])),
-                        Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
-                    );
+                    let prefix = format!("{}>  ", box_prefix(&trail));
+                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, pal::INSERT);
                 }
             }
         }
 
-        // ── Confirm delete overlay ─────────────────────────────────────────────
-        if let Mode::Confirm { target } = &app.mode {
-            let label   = &app.nodes[*target].label;
-            let subtree = app.collect_subtree(*target);
-            let desc    = subtree.len() - 1;
-            let body = if desc == 0 { format!(" Delete \"{}\"? [y]es / [n]o ", label) }
-                       else { format!(" Delete \"{}\" + {} descendant(s)? [y]es / [n]o ", label, desc) };
-            let dlg_w = (body.len() as u16 + 2).min(canvas.width);
-            let dlg   = Rect {
-                x: canvas.x + canvas.width.saturating_sub(dlg_w) / 2,
-                y: canvas.y + canvas.height.saturating_sub(3) / 2,
-                width: dlg_w, height: 3,
-            };
-            frame.render_widget(Clear, dlg);
-            frame.render_widget(
-                Block::default().borders(Borders::ALL)
-                    .style(Style::default().fg(Color::Red))
-                    .title(Span::styled(" Confirm Delete ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
-                dlg,
-            );
-            frame.render_widget(
-                Paragraph::new(body.trim().to_string()).style(Style::default().fg(Color::White)),
-                Rect { x: dlg.x + 1, y: dlg.y + 1, width: dlg.width.saturating_sub(2), height: 1 },
-            );
+        // ── Edit inline prompt ────────────────────────────────────────────────
+        if let Mode::Input {
+            action: InputAction::EditLabel { node } | InputAction::Overwrite { node },
+            ref buf, cursor
+        } = app.mode {
+            let sx = app.nodes[node].world_x - app.camera_x;
+            let sy = app.nodes[node].world_y - app.camera_y;
+            if sx >= 0 && sy >= 0 {
+                let (sx, sy) = (sx as u16, sy as u16);
+                if sx < canvas.width && sy < canvas.height {
+                    let idx   = order.iter().position(|&(id, _)| id == node).unwrap_or(0);
+                    let depth = order.get(idx).map(|&(_, d)| d).unwrap_or(0);
+                    let trail = build_trail_for(&order, &is_last, idx, depth);
+                    let prefix = format!("{}>  ", box_prefix(&trail));
+                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, pal::EDIT);
+                }
+            }
         }
 
         // ── Status bar ────────────────────────────────────────────────────────
-        let status = match &app.mode {
-            Mode::Normal => {
-                if app.has_selection() {
-                    let node  = &app.nodes[app.selected];
-                    let depth = { let mut d = 0u32; let mut cur = app.selected;
-                        while let Some(p) = app.nodes[cur].parent { cur = p; d += 1; } d };
-                    format!(" [{}] \"{}\"  depth:{}  world({},{})  camera({},{})  {} nodes ",
-                        app.selected, node.label, depth, node.world_x, node.world_y,
-                        app.camera_x, app.camera_y, app.nodes.len())
-                } else {
-                    format!(" camera({},{})  {} nodes  — press n to enter Nodes mode ",
-                        app.camera_x, app.camera_y, app.nodes.len())
-                }
-            }
-            Mode::Nodes { cursor_x, cursor_y } =>
-                format!(" NODES  cursor({},{})  camera({},{}) ", cursor_x, cursor_y, app.camera_x, app.camera_y),
-            Mode::NodeNew { cursor_x, cursor_y, .. } =>
-                format!(" NEW NODE  at({},{}) ", cursor_x, cursor_y),
-            Mode::NodePick { origin_id, cursor_x, cursor_y, .. } =>
-                format!(" PICK  \"{}\"  → ({},{}) ", app.nodes[*origin_id].label, cursor_x, cursor_y),
-            Mode::Reparent { subject, cursor, .. } =>
-                format!(" REPARENT  \"{}\"  →  child of \"{}\" ", app.nodes[*subject].label, app.nodes[*cursor].label),
-            Mode::Insert { parent, .. } =>
-                format!(" INSERT  child of \"{}\" ", app.nodes[*parent].label),
-            Mode::Confirm { target } => {
-                let count = app.collect_subtree(*target).len();
-                format!(" DELETE  \"{}\" and {} descendant(s) ", app.nodes[*target].label, count - 1)
-            }
-        };
-
+        let status = build_status(app);
         frame.render_widget(
             Paragraph::new(status).style(Style::default().fg(Color::DarkGray)),
             Rect { x: canvas.x, y: area.y + area.height.saturating_sub(2), width: canvas.width, height: 1 },
         );
     })?;
     Ok(())
+}
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Render a text-input line with a block cursor at `cursor` byte offset.
+fn render_input_line(
+    frame: &mut ratatui::Frame,
+    canvas: Rect, sx: u16, sy: u16,
+    prefix: &str, buf: &str, cursor: usize,
+    color: Color,
+) {
+    let before    = &buf[..cursor];
+    let cur_char  = buf[cursor..].chars().next().unwrap_or(' ');
+    let after_off = cursor + cur_char.len_utf8();
+    let after     = if after_off <= buf.len() { &buf[after_off..] } else { "" };
+
+    let reset_bg = Style::default().bg(Color::Reset);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(prefix.to_string(),      reset_bg.patch(Style::default().fg(pal::DIM))),
+            Span::styled(before.to_string(),       reset_bg.patch(pal::tinted(color))),
+            Span::styled(cur_char.to_string(),     pal::solid(color)),
+            Span::styled(after.to_string(),        reset_bg.patch(pal::tinted(color))),
+        ])),
+        Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
+    );
+}
+
+/// Reconstruct the box-drawing trail for a node at `idx`/`depth` from the layout order.
+fn build_trail_for(order: &[(usize, usize)], is_last: &[bool], idx: usize, depth: usize) -> Vec<bool> {
+    if depth == 0 { return vec![]; }
+    let mut trail = Vec::with_capacity(depth);
+    for target_depth in 1..=depth {
+        let ancestor_idx = order[..idx].iter().rposition(|&(_, d)| d == target_depth - 1);
+        trail.push(ancestor_idx.map(|ai| is_last[ai]).unwrap_or(true));
+    }
+    if let Some(last) = trail.last_mut() { *last = is_last[idx]; }
+    trail
+}
+
+fn build_status(app: &App) -> String {
+    match &app.mode {
+        Mode::Input { action: InputAction::InsertChild { parent }, buf, .. } =>
+            format!(" inserting under \"{}\" │ \"{}\" ", app.nodes[*parent].label, buf),
+        Mode::Input { action: InputAction::EditLabel { node } | InputAction::Overwrite { node }, buf, .. } =>
+            format!(" editing \"{}\" → \"{}\" ", app.nodes[*node].label, buf),
+        Mode::Reparent { subject, cursor, .. } =>
+            format!(" reparenting \"{}\" → child of \"{}\" ", app.nodes[*subject].label, app.nodes[*cursor].label),
+        Mode::Canvas { state: CanvasState::Browse } => {
+            if app.has_selection() {
+                let node  = &app.nodes[app.selected];
+                let depth = { let mut d = 0u32; let mut c = app.selected;
+                    while let Some(p) = app.nodes[c].parent { c = p; d += 1; } d };
+                format!(" {} │ depth {} │ cursor ({},{}) │ camera ({},{}) │ {} nodes ",
+                    node.label, depth, app.cursor_x, app.cursor_y,
+                    app.camera_x, app.camera_y, app.nodes.len())
+            } else {
+                format!(" cursor ({},{}) │ camera ({},{}) │ {} nodes ",
+                    app.cursor_x, app.cursor_y, app.camera_x, app.camera_y, app.nodes.len())
+            }
+        }
+        Mode::Canvas { state: CanvasState::New { buf, .. } } =>
+            format!(" new node at ({},{}) │ \"{}\" ", app.cursor_x, app.cursor_y, buf),
+        Mode::Canvas { state: CanvasState::Pick { origin_id, .. } } =>
+            format!(" picking \"{}\" → ({},{}) ", app.nodes[*origin_id].label, app.cursor_x, app.cursor_y),
+    }
 }

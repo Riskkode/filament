@@ -12,7 +12,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
-use app::{App, Mode};
+use app::{App, CanvasState, InputAction, Mode};
 use ui::draw::draw;
 
 fn main() -> io::Result<()> {
@@ -31,23 +31,21 @@ fn main() -> io::Result<()> {
             let canvas_h = th.saturating_sub(3) as usize;
 
             match app.mode {
-                // ── Insert ────────────────────────────────────────────────────
-                Mode::Insert { .. } => match key.code {
-                    KeyCode::Enter     => { app.confirm_insert(); app.scroll_to_insert(canvas_h); }
-                    KeyCode::Esc       => app.cancel_insert(),
-                    KeyCode::Backspace => app.insert_backspace(),
-                    KeyCode::Left      => app.insert_move_cursor(-1),
-                    KeyCode::Right     => app.insert_move_cursor(1),
-                    KeyCode::Tab       => { app.insert_indent();  app.scroll_to_insert(canvas_h); }
-                    KeyCode::BackTab   => { app.insert_dedent();  app.scroll_to_insert(canvas_h); }
-                    KeyCode::Char(c)   => app.insert_char(c),
-                    _ => {}
-                },
-
-                // ── Confirm delete ────────────────────────────────────────────
-                Mode::Confirm { .. } => match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => app.confirm_delete(),
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.cancel_confirm(),
+                // ── Input (insert + edit) ─────────────────────────────────────
+                Mode::Input { .. } => match key.code {
+                    KeyCode::Enter => {
+                        let is_insert = matches!(&app.mode,
+                            Mode::Input { action: InputAction::InsertChild { .. }, .. });
+                        app.confirm_input();
+                        if is_insert { app.scroll_to_input(canvas_h); }
+                    }
+                    KeyCode::Esc       => app.cancel_input(),
+                    KeyCode::Backspace => app.input_backspace(),
+                    KeyCode::Left      => app.input_move_cursor(-1),
+                    KeyCode::Right     => app.input_move_cursor(1),
+                    KeyCode::Tab       => { app.input_indent();  app.scroll_to_input(canvas_h); }
+                    KeyCode::BackTab   => { app.input_dedent();  app.scroll_to_input(canvas_h); }
+                    KeyCode::Char(c)   => app.input_char(c),
                     _ => {}
                 },
 
@@ -61,78 +59,62 @@ fn main() -> io::Result<()> {
                         (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => { app.reparent_nav_vertical(-1); app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => { app.reparent_nav_parent();     app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => { app.reparent_nav_child();      app.scroll_to_selected(canvas_h); }
-                        (KeyModifiers::SHIFT, KeyCode::Char('H')) => app.pan(-4, 0),
-                        (KeyModifiers::SHIFT, KeyCode::Char('L')) => app.pan(4, 0),
-                        (KeyModifiers::SHIFT, KeyCode::Char('K')) => app.pan(0, -2),
-                        (KeyModifiers::SHIFT, KeyCode::Char('J')) => app.pan(0, 2),
                         _ => {}
                     }
                 }
 
-                // ── Nodes mode ────────────────────────────────────────────────
-                Mode::Nodes { .. } => match (key.modifiers, key.code) {
-                    (_, KeyCode::Esc)                                              => app.cancel_nodes(),
-                    (KeyModifiers::NONE, KeyCode::Char('n'))                       => app.nodes_start_new(),
-                    (KeyModifiers::NONE, KeyCode::Char('p'))                       => app.nodes_pick_or_place(),
-                    (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.nodes_move(-1, 0, canvas_w, canvas_h as u16),
-                    (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.nodes_move(1, 0, canvas_w, canvas_h as u16),
-                    (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.nodes_move(0, -1, canvas_w, canvas_h as u16),
-                    (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.nodes_move(0, 1, canvas_w, canvas_h as u16),
-                    _ => {}
-                },
+                // ── Canvas ───────────────────────────────────────────────────
+                Mode::Canvas { .. } => {
+                    // New sub-state: all keystrokes go to the text buffer.
+                    if matches!(&app.mode, Mode::Canvas { state: CanvasState::New { .. } }) {
+                        match key.code {
+                            KeyCode::Enter     => app.canvas_confirm_new(),
+                            KeyCode::Esc       => app.canvas_cancel_sub(),
+                            KeyCode::Backspace => app.canvas_new_backspace(),
+                            KeyCode::Left      => app.canvas_new_move_cursor(-1),
+                            KeyCode::Right     => app.canvas_new_move_cursor(1),
+                            KeyCode::Char(c)   => app.canvas_new_char(c),
+                            _ => {}
+                        }
+                    } else {
+                        // Browse + Pick: cursor movement and all top-level actions.
+                        match (key.modifiers, key.code) {
+                            (_, KeyCode::Char('q')) => break,
 
-                // ── NodeNew ───────────────────────────────────────────────────
-                Mode::NodeNew { .. } => match key.code {
-                    KeyCode::Enter     => app.confirm_node_new(),
-                    KeyCode::Esc       => app.cancel_node_new(),
-                    KeyCode::Backspace => app.node_new_backspace(),
-                    KeyCode::Left      => app.node_new_move_cursor(-1),
-                    KeyCode::Right     => app.node_new_move_cursor(1),
-                    KeyCode::Char(c)   => app.node_new_char(c),
-                    _ => {}
-                },
+                            // ── Cursor movement ───────────────────────────────
+                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
+                            // Larger steps for faster traversal.
+                            (KeyModifiers::SHIFT, KeyCode::Char('H')) => app.cursor_move(-4, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::Char('L')) => app.cursor_move(4, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::Char('K')) => app.cursor_move(0, -4, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::Char('J')) => app.cursor_move(0, 4, canvas_w, canvas_h as u16),
 
-                // ── NodePick ─────────────────────────────────────────────────
-                Mode::NodePick { .. } => match (key.modifiers, key.code) {
-                    (_, KeyCode::Esc)                                              => app.cancel_nodes(),
-                    (KeyModifiers::NONE, KeyCode::Char('p'))                       => app.nodes_pick_or_place(),
-                    (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.nodes_pick_move(-1, 0, canvas_w, canvas_h as u16),
-                    (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.nodes_pick_move(1, 0, canvas_w, canvas_h as u16),
-                    (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.nodes_pick_move(0, -1, canvas_w, canvas_h as u16),
-                    (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.nodes_pick_move(0, 1, canvas_w, canvas_h as u16),
-                    _ => {}
-                },
+                            // ── Node operations ───────────────────────────────
+                            (KeyModifiers::NONE, KeyCode::Char('i'))  => app.enter_insert(),
+                            (KeyModifiers::NONE, KeyCode::Char('e'))  => app.enter_edit(),
+                            (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.enter_overwrite(),
+                            (KeyModifiers::NONE, KeyCode::Char('v'))  => app.enter_reparent(),
+                            (KeyModifiers::NONE, KeyCode::Char('x'))  => app.delete_selected(),
+                            (KeyModifiers::NONE, KeyCode::Char('n'))  => app.canvas_start_new(),
+                            (KeyModifiers::NONE, KeyCode::Char('p'))  => app.canvas_pick_or_place(),
 
-                // ── Normal ────────────────────────────────────────────────────
-                Mode::Normal => match (key.modifiers, key.code) {
-                    (_, KeyCode::Char('q')) => break,
+                            // ── Structure ─────────────────────────────────────
+                            (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); }
+                            (KeyModifiers::SHIFT, KeyCode::Char('D')) => { app.indent_decrease(); app.recompute_layout(); }
+                            (KeyModifiers::NONE, KeyCode::Char('z')) | (_, KeyCode::Char(' ')) => {
+                                app.toggle_collapse(); app.recompute_layout();
+                            }
 
-                    (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => { app.nav_down();   app.scroll_to_selected(canvas_h); }
-                    (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => { app.nav_up();     app.scroll_to_selected(canvas_h); }
-                    (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => { app.nav_parent(); app.scroll_to_selected(canvas_h); }
-                    (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => { app.nav_child();  app.scroll_to_selected(canvas_h); }
+                            // ── Camera ────────────────────────────────────────
+                            (_, KeyCode::Char('c')) => app.center_on_selected(canvas_w, canvas_h as u16),
 
-                    (KeyModifiers::SHIFT, KeyCode::Char('H')) => app.pan(-4, 0),
-                    (KeyModifiers::SHIFT, KeyCode::Char('L')) => app.pan(4, 0),
-                    (KeyModifiers::SHIFT, KeyCode::Char('K')) => app.pan(0, -2),
-                    (KeyModifiers::SHIFT, KeyCode::Char('J')) => app.pan(0, 2),
-
-                    (_, KeyCode::Char('c')) => app.center_on_selected(canvas_w, canvas_h as u16),
-
-                    (KeyModifiers::NONE, KeyCode::Char('z')) | (_, KeyCode::Char(' ')) => {
-                        app.toggle_collapse(); app.recompute_layout(); app.scroll_to_selected(canvas_h);
+                            _ => {}
+                        }
                     }
-
-                    (KeyModifiers::NONE, KeyCode::Char('d')) => { app.indent_increase(); app.recompute_layout(); app.scroll_to_selected(canvas_h); }
-                    (KeyModifiers::SHIFT, KeyCode::Char('D')) => { app.indent_decrease(); app.recompute_layout(); app.scroll_to_selected(canvas_h); }
-
-                    (KeyModifiers::NONE, KeyCode::Char('v')) => app.enter_reparent(),
-                    (KeyModifiers::NONE, KeyCode::Char('i')) => app.enter_insert(),
-                    (KeyModifiers::NONE, KeyCode::Char('x')) => app.enter_confirm_delete(),
-                    (KeyModifiers::NONE, KeyCode::Char('n')) => app.enter_nodes(canvas_w, canvas_h as u16),
-
-                    _ => {}
-                },
+                }
             }
         }
     }
