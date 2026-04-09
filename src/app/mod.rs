@@ -115,6 +115,62 @@ impl App {
         else if sy >= canvas_h as i32 { self.camera_y = wy - (canvas_h as i32 - 1); }
     }
 
+    // ── Cardinal warp ─────────────────────────────────────────────────────────
+
+    /// Warp the cursor to the next occupied row/column in a cardinal direction.
+    /// dx/dy must be exactly ±1 with the other zero.
+    /// Does nothing if there are no nodes in that direction.
+    pub fn cursor_warp(&mut self, dx: i32, dy: i32, canvas_w: u16, canvas_h: u16) {
+        let target = if dy != 0 {
+            let candidates: Vec<_> = self.nodes.iter()
+                .filter(|n| n.row != usize::MAX)
+                .filter(|n| if dy > 0 { n.world_y > self.cursor_y } else { n.world_y < self.cursor_y })
+                .collect();
+            if candidates.is_empty() { return; }
+            let extreme_y = if dy > 0 {
+                candidates.iter().map(|n| n.world_y).min().unwrap()
+            } else {
+                candidates.iter().map(|n| n.world_y).max().unwrap()
+            };
+            candidates.iter()
+                .filter(|n| n.world_y == extreme_y)
+                .min_by_key(|n| (n.world_x - self.cursor_x).abs())
+                .map(|n| (n.world_x, n.world_y))
+        } else {
+            let candidates: Vec<_> = self.nodes.iter()
+                .filter(|n| n.row != usize::MAX)
+                .filter(|n| if dx > 0 { n.world_x > self.cursor_x } else { n.world_x < self.cursor_x })
+                .collect();
+            if candidates.is_empty() { return; }
+            let extreme_x = if dx > 0 {
+                candidates.iter().map(|n| n.world_x).min().unwrap()
+            } else {
+                candidates.iter().map(|n| n.world_x).max().unwrap()
+            };
+            candidates.iter()
+                .filter(|n| n.world_x == extreme_x)
+                .min_by_key(|n| (n.world_y - self.cursor_y).abs())
+                .map(|n| (n.world_x, n.world_y))
+        };
+
+        if let Some((wx, wy)) = target {
+            self.cursor_x = wx;
+            self.cursor_y = wy;
+            if let Some(id) = self.node_near_cursor(self.cursor_x, self.cursor_y) {
+                self.selected = id;
+            }
+            let margin = 6i32;
+            let cw = canvas_w as i32;
+            let ch = canvas_h as i32;
+            let sx = self.cursor_x - self.camera_x;
+            let sy = self.cursor_y - self.camera_y;
+            if sx < margin       { self.camera_x = self.cursor_x - margin; }
+            if sx >= cw - margin { self.camera_x = self.cursor_x - (cw - margin - 1); }
+            if sy < margin       { self.camera_y = self.cursor_y - margin; }
+            if sy >= ch - margin { self.camera_y = self.cursor_y - (ch - margin - 1); }
+        }
+    }
+
     // ── Collapse ──────────────────────────────────────────────────────────────
 
     pub fn toggle_collapse(&mut self) {

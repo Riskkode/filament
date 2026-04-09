@@ -86,11 +86,11 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
-                            // Larger steps for faster traversal.
-                            (KeyModifiers::SHIFT, KeyCode::Char('H')) => app.cursor_move(-4, 0, canvas_w, canvas_h as u16),
-                            (KeyModifiers::SHIFT, KeyCode::Char('L')) => app.cursor_move(4, 0, canvas_w, canvas_h as u16),
-                            (KeyModifiers::SHIFT, KeyCode::Char('K')) => app.cursor_move(0, -4, canvas_w, canvas_h as u16),
-                            (KeyModifiers::SHIFT, KeyCode::Char('J')) => app.cursor_move(0, 4, canvas_w, canvas_h as u16),
+                            // ── Cardinal warp: jump to next occupied row/column.
+                            (KeyModifiers::SHIFT, KeyCode::Char('H')) => app.cursor_warp(-1,  0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::Char('L')) => app.cursor_warp( 1,  0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::Char('K')) => app.cursor_warp( 0, -1, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::Char('J')) => app.cursor_warp( 0,  1, canvas_w, canvas_h as u16),
 
                             // ── Node operations ───────────────────────────────
                             (KeyModifiers::NONE, KeyCode::Char('i'))  => app.enter_insert(),

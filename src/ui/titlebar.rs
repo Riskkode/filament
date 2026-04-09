@@ -61,7 +61,7 @@ fn canvas_title() -> Line<'static> {
         bracket("p",   pal::PICK),     Span::styled(" pick",      pal::tinted(pal::PICK)),
         sep(),
         // ── Immediate commands ────────────────────────────────────────────────
-        Span::styled("[x] delete  [d/D] depth  [z] collapse  [c] center  [HJKL] pan  [q] quit ",
+        Span::styled("[x] delete  [d/D] depth  [z] collapse  [c] center  [HJKL] warp  [q] quit ",
             Style::default().fg(Color::DarkGray)),
     ])
 }
