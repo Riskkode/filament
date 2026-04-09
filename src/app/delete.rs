@@ -27,6 +27,7 @@ impl App {
                     label:     node.label.clone(),
                     parent:    node.parent.and_then(|p| remap[p]),
                     children:  node.children.iter().filter_map(|&c| remap[c]).collect(),
+                    links:     node.links.iter().filter_map(|&l| remap[l]).collect(),
                     collapsed: node.collapsed,
                     row:       usize::MAX,
                     world_x:   node.world_x,

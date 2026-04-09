@@ -9,6 +9,9 @@ pub const EDIT:     Color = Color::Yellow;
 pub const REPARENT: Color = Color::Blue;
 pub const CANVAS:   Color = Color::Cyan;
 pub const PICK:     Color = Color::Magenta;
+pub const LINK:     Color = Color::LightGreen;
+/// Dimmer shade used for persistent link arrows in browse mode.
+pub const LINK_ARROW: Color = Color::Green;
 
 // ── Node / tree colours ───────────────────────────────────────────────────────
 

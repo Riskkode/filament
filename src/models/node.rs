@@ -2,6 +2,9 @@ pub struct Node {
     pub label:     String,
     pub parent:    Option<usize>,
     pub children:  Vec<usize>,
+    /// Outgoing logical links to other nodes (by index). A node may have any
+    /// number of outgoing links to distinct targets.
+    pub links:     Vec<usize>,
     pub collapsed: bool,
     /// Row in the combined visible list (`usize::MAX` = hidden).
     pub row:       usize,

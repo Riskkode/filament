@@ -2,7 +2,7 @@ use crate::app::{App, CanvasState, InputAction, Mode};
 use crate::ui::palette as pal;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
-use crate::ui::widgets::{draw_elbow_arrow, put_char};
+use crate::ui::widgets::{draw_elbow_arrow, draw_link_arrow, put_char};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Rect,
@@ -64,10 +64,14 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let is_insert_parent = matches!(&app.mode,
                 Mode::Input { action: InputAction::InsertChild { parent }, .. } if *parent == id);
             let is_pick_origin   = matches!(&app.mode,
-                Mode::Canvas { state: CanvasState::Pick { origin_id, .. }, .. } if *origin_id == id);
+                Mode::Canvas { state: CanvasState::Pick { origin_id, .. } } if *origin_id == id);
+            let is_link_origin   = matches!(&app.mode,
+                Mode::Canvas { state: CanvasState::Link { origin_id } } if *origin_id == id);
 
             let label_style = if is_reparent_subj || is_pick_origin {
                 pal::solid(pal::PICK)
+            } else if is_link_origin {
+                pal::solid(pal::LINK)
             } else if is_reparent_cur {
                 pal::solid(pal::REPARENT)
             } else if is_insert_parent {
@@ -112,6 +116,31 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             draw_elbow_arrow(frame, canvas, app.camera_x, app.camera_y,
                 origin_x, origin_y, app.cursor_x, app.cursor_y,
                 pal::tinted(pal::PICK));
+        }
+
+        // ── Persistent link arrows (whole tree when any member is in focus) ───
+        if app.has_selection() {
+            let mut root = app.selected;
+            while let Some(p) = app.nodes[root].parent { root = p; }
+            let tree = app.collect_subtree(root);
+            for src_id in tree {
+                for tgt_id in app.nodes[src_id].links.clone() {
+                    if tgt_id < app.nodes.len() && app.nodes[tgt_id].row != usize::MAX {
+                        draw_link_arrow(frame, canvas, app.camera_x, app.camera_y,
+                            app.nodes[src_id].world_x, app.nodes[src_id].world_y,
+                            app.nodes[tgt_id].world_x, app.nodes[tgt_id].world_y,
+                            pal::tinted(pal::LINK_ARROW));
+                    }
+                }
+            }
+        }
+
+        // ── Link mode preview arrow ───────────────────────────────────────────
+        if let Mode::Canvas { state: CanvasState::Link { origin_id } } = app.mode {
+            draw_link_arrow(frame, canvas, app.camera_x, app.camera_y,
+                app.nodes[origin_id].world_x, app.nodes[origin_id].world_y,
+                app.cursor_x, app.cursor_y,
+                pal::tinted(pal::LINK));
         }
 
         // ── Canvas new-node inline prompt ─────────────────────────────────────
@@ -238,5 +267,14 @@ fn build_status(app: &App) -> String {
             format!(" new node at ({},{}) │ \"{}\" ", app.cursor_x, app.cursor_y, buf),
         Mode::Canvas { state: CanvasState::Pick { origin_id, .. } } =>
             format!(" picking \"{}\" → ({},{}) ", app.nodes[*origin_id].label, app.cursor_x, app.cursor_y),
+        Mode::Canvas { state: CanvasState::Link { origin_id } } => {
+            let target = app.node_near_cursor(app.cursor_x, app.cursor_y)
+                .filter(|&t| t != *origin_id)
+                .map(|t| format!("\"{}\"", app.nodes[t].label))
+                .unwrap_or_else(|| "(none)".into());
+            let existing = app.nodes[*origin_id].links.len();
+            format!(" linking from \"{}\"  →  {}  │  {} outgoing links ",
+                app.nodes[*origin_id].label, target, existing)
+        }
     }
 }

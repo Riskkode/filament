@@ -86,7 +86,7 @@ impl App {
                 if buf.is_empty() { self.mode = Mode::Canvas { state: CanvasState::Browse }; return; }
                 let new_idx = self.nodes.len();
                 self.nodes.push(Node {
-                    label: buf, parent: Some(parent), children: vec![],
+                    label: buf, parent: Some(parent), children: vec![], links: vec![],
                     collapsed: false, row: usize::MAX, world_x: 0, world_y: 0,
                 });
                 self.nodes[parent].children.push(new_idx);

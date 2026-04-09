@@ -77,9 +77,13 @@ fn main() -> io::Result<()> {
                             _ => {}
                         }
                     } else {
-                        // Browse + Pick: cursor movement and all top-level actions.
+                        // Browse + Pick + Link: cursor movement and all top-level actions.
                         match (key.modifiers, key.code) {
                             (_, KeyCode::Char('q')) => break,
+
+                            // ── Link confirmation / cancellation ──────────────
+                            (_, KeyCode::Enter)     => app.canvas_confirm_link(),
+                            (_, KeyCode::Esc)       => app.canvas_cancel_sub(),
 
                             // ── Cursor movement ───────────────────────────────
                             (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
@@ -100,6 +104,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('x'))  => app.delete_selected(),
                             (KeyModifiers::NONE, KeyCode::Char('n'))  => app.canvas_start_new(),
                             (KeyModifiers::NONE, KeyCode::Char('p'))  => app.canvas_pick_or_place(),
+                            (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
 
                             // ── Structure ─────────────────────────────────────
                             (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); }

@@ -78,11 +78,40 @@ impl App {
         if !buf.is_empty() {
             let id = self.nodes.len();
             self.nodes.push(Node {
-                label: buf, parent: None, children: vec![],
+                label: buf, parent: None, children: vec![], links: vec![],
                 collapsed: false, row: usize::MAX,
                 world_x: self.cursor_x, world_y: self.cursor_y,
             });
             self.selected = id;
+        }
+        self.mode = Mode::Canvas { state: CanvasState::Browse };
+    }
+
+    // ── Links ─────────────────────────────────────────────────────────────────
+
+    /// `f` — enter Link state from the currently selected node.
+    pub fn canvas_start_link(&mut self) {
+        if !self.has_selection() { return; }
+        let origin_id = self.selected;
+        self.mode = Mode::Canvas { state: CanvasState::Link { origin_id } };
+    }
+
+    /// Enter — toggle the link between origin and the node nearest the cursor.
+    /// Creates the link if absent, removes it if already present.
+    /// Does nothing if the cursor is on the origin itself or empty space.
+    pub fn canvas_confirm_link(&mut self) {
+        let origin_id = match self.mode {
+            Mode::Canvas { state: CanvasState::Link { origin_id } } => origin_id,
+            _ => return,
+        };
+        if let Some(target_id) = self.node_near_cursor(self.cursor_x, self.cursor_y) {
+            if target_id != origin_id {
+                if self.nodes[origin_id].links.contains(&target_id) {
+                    self.nodes[origin_id].links.retain(|&l| l != target_id);
+                } else {
+                    self.nodes[origin_id].links.push(target_id);
+                }
+            }
         }
         self.mode = Mode::Canvas { state: CanvasState::Browse };
     }

@@ -13,7 +13,8 @@ fn mode_color(mode: &Mode) -> Color {
         Mode::Input { action: InputAction::InsertChild { .. }, .. }    => pal::INSERT,
         Mode::Input { .. }                                             => pal::EDIT,
         Mode::Reparent { .. }                                          => pal::REPARENT,
-        Mode::Canvas { state: CanvasState::Pick { .. }, .. }          => pal::PICK,
+        Mode::Canvas { state: CanvasState::Pick { .. } }              => pal::PICK,
+        Mode::Canvas { state: CanvasState::Link { .. } }              => pal::LINK,
         Mode::Canvas { .. }                                            => pal::CANVAS,
     }
 }
@@ -43,6 +44,10 @@ pub fn build_title(mode: &Mode) -> Line<'static> {
             "PICK", pal::PICK,
             "hjkl:move  p:place  Esc:cancel",
         ),
+        Mode::Canvas { state: CanvasState::Link { .. } } => modal_title(
+            "LINK", pal::LINK,
+            "hjkl:navigate  Enter:toggle link  Esc:cancel",
+        ),
     }
 }
 
@@ -58,7 +63,8 @@ fn canvas_title() -> Line<'static> {
         bracket("e/E", pal::EDIT),     Span::styled(" edit  ",    pal::tinted(pal::EDIT)),
         bracket("v",   pal::REPARENT), Span::styled(" reparent  ",pal::tinted(pal::REPARENT)),
         bracket("n",   pal::INSERT),   Span::styled(" new  ",     pal::tinted(pal::INSERT)),
-        bracket("p",   pal::PICK),     Span::styled(" pick",      pal::tinted(pal::PICK)),
+        bracket("p",   pal::PICK),     Span::styled(" pick  ",    pal::tinted(pal::PICK)),
+        bracket("f",   pal::LINK),     Span::styled(" link",      pal::tinted(pal::LINK)),
         sep(),
         // ── Immediate commands ────────────────────────────────────────────────
         Span::styled("[x] delete  [d/D] depth  [z] collapse  [c] center  [HJKL] warp  [q] quit ",
