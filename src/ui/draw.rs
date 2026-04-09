@@ -2,11 +2,11 @@ use crate::app::{App, CanvasState, InputAction, Mode};
 use crate::ui::palette as pal;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
-use crate::ui::widgets::{draw_elbow_arrow, draw_link_arrow, put_char};
+use crate::ui::widgets::{route_link_into_buf, ArrowBuf, put_char};
 use ratatui::{
     backend::CrosstermBackend,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Terminal,
@@ -16,6 +16,13 @@ use std::io;
 pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     let order   = app.recompute_layout();
     let is_last = compute_is_last(&order);
+
+    // Build visible-node bounds for obstacle-aware routing:
+    // (world_x, world_y, world_x_end) for every node currently in the layout.
+    let visible_nodes: Vec<(i32, i32, i32)> = app.nodes.iter()
+        .filter(|n| n.row != usize::MAX)
+        .map(|n| (n.world_x, n.world_y, n.world_x_end))
+        .collect();
 
     terminal.draw(|frame| {
         let area = frame.area();
@@ -36,7 +43,49 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             height: area.height.saturating_sub(3),
         };
 
+        // ── Persistent link arrows (single buffered pass) ─────────────────────
+        // Arrows are routed first and obstacle-aware, then flushed before nodes
+        // so that node text naturally renders on top without any visual conflict.
+        let mut arrow_buf = ArrowBuf::new();
+        if app.has_selection() {
+            let mut root = app.selected;
+            while let Some(p) = app.nodes[root].parent { root = p; }
+            let tree = app.collect_subtree(root);
+            for src_id in tree {
+                for tgt_id in app.nodes[src_id].links.clone() {
+                    if tgt_id < app.nodes.len() && app.nodes[tgt_id].row != usize::MAX {
+                        route_link_into_buf(
+                            &mut arrow_buf, canvas, app.camera_x, app.camera_y,
+                            &visible_nodes,
+                            app.nodes[src_id].world_x,
+                            app.nodes[src_id].world_y,
+                            app.nodes[src_id].world_x_end,
+                            app.nodes[tgt_id].world_x,
+                            app.nodes[tgt_id].world_y,
+                            app.nodes[tgt_id].world_x_end,
+                        );
+                    }
+                }
+            }
+            arrow_buf.flush(frame, canvas, pal::tinted(pal::LINK_ARROW));
+        }
+
+        // ── Link mode preview arrow (separate buf, drawn on top) ──────────────
+        if let Mode::Canvas { state: CanvasState::Link { origin_id } } = app.mode {
+            let mut prev = ArrowBuf::new();
+            route_link_into_buf(
+                &mut prev, canvas, app.camera_x, app.camera_y,
+                &visible_nodes,
+                app.nodes[origin_id].world_x,
+                app.nodes[origin_id].world_y,
+                app.nodes[origin_id].world_x_end,
+                app.cursor_x, app.cursor_y, app.cursor_x,
+            );
+            prev.flush(frame, canvas, pal::tinted(pal::LINK));
+        }
+
         // ── Bullet lists ──────────────────────────────────────────────────────
+        // Rendered after arrows so node text naturally wins over any arrow cell.
         let mut trail: Vec<bool> = Vec::new();
 
         for (idx, &(id, depth)) in order.iter().enumerate() {
@@ -111,36 +160,17 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
         // ── Canvas pick arrow ─────────────────────────────────────────────────
         if let Mode::Canvas {
-            state: CanvasState::Pick { origin_x, origin_y, .. } } = app.mode
+            state: CanvasState::Pick { origin_id, origin_x, origin_y } } = app.mode
         {
-            draw_elbow_arrow(frame, canvas, app.camera_x, app.camera_y,
-                origin_x, origin_y, app.cursor_x, app.cursor_y,
-                pal::tinted(pal::PICK));
-        }
-
-        // ── Persistent link arrows (whole tree when any member is in focus) ───
-        if app.has_selection() {
-            let mut root = app.selected;
-            while let Some(p) = app.nodes[root].parent { root = p; }
-            let tree = app.collect_subtree(root);
-            for src_id in tree {
-                for tgt_id in app.nodes[src_id].links.clone() {
-                    if tgt_id < app.nodes.len() && app.nodes[tgt_id].row != usize::MAX {
-                        draw_link_arrow(frame, canvas, app.camera_x, app.camera_y,
-                            app.nodes[src_id].world_x, app.nodes[src_id].world_y,
-                            app.nodes[tgt_id].world_x, app.nodes[tgt_id].world_y,
-                            pal::tinted(pal::LINK_ARROW));
-                    }
-                }
-            }
-        }
-
-        // ── Link mode preview arrow ───────────────────────────────────────────
-        if let Mode::Canvas { state: CanvasState::Link { origin_id } } = app.mode {
-            draw_link_arrow(frame, canvas, app.camera_x, app.camera_y,
-                app.nodes[origin_id].world_x, app.nodes[origin_id].world_y,
-                app.cursor_x, app.cursor_y,
-                pal::tinted(pal::LINK));
+            let ox_end = app.nodes[origin_id].world_x_end;
+            let mut pick_buf = ArrowBuf::new();
+            route_link_into_buf(
+                &mut pick_buf, canvas, app.camera_x, app.camera_y,
+                &visible_nodes,
+                origin_x, origin_y, ox_end,
+                app.cursor_x, app.cursor_y, app.cursor_x,
+            );
+            pick_buf.flush(frame, canvas, pal::tinted(pal::PICK));
         }
 
         // ── Canvas new-node inline prompt ─────────────────────────────────────
@@ -206,7 +236,6 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/// Render a text-input line with a block cursor at `cursor` byte offset.
 fn render_input_line(
     frame: &mut ratatui::Frame,
     canvas: Rect, sx: u16, sy: u16,
@@ -230,7 +259,6 @@ fn render_input_line(
     );
 }
 
-/// Reconstruct the box-drawing trail for a node at `idx`/`depth` from the layout order.
 fn build_trail_for(order: &[(usize, usize)], is_last: &[bool], idx: usize, depth: usize) -> Vec<bool> {
     if depth == 0 { return vec![]; }
     let mut trail = Vec::with_capacity(depth);

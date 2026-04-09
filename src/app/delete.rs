@@ -30,8 +30,9 @@ impl App {
                     links:     node.links.iter().filter_map(|&l| remap[l]).collect(),
                     collapsed: node.collapsed,
                     row:       usize::MAX,
-                    world_x:   node.world_x,
-                    world_y:   node.world_y,
+                    world_x:     node.world_x,
+                    world_y:     node.world_y,
+                    world_x_end: 0,
                 });
             }
         }

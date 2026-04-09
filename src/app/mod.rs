@@ -54,10 +54,13 @@ impl App {
             let mut local: Vec<(usize, usize)> = Vec::new();
             Self::collect_visible_inner(&mut self.nodes, root, 0, &mut local);
             let (rx, ry) = (self.nodes[root].world_x, self.nodes[root].world_y);
-            for (lr, &(id, _)) in local.iter().enumerate() {
-                self.nodes[id].row     = offset + lr;
-                self.nodes[id].world_x = rx;
-                self.nodes[id].world_y = ry + lr as i32;
+            for (lr, &(id, depth)) in local.iter().enumerate() {
+                self.nodes[id].row       = offset + lr;
+                self.nodes[id].world_x   = rx;
+                self.nodes[id].world_y   = ry + lr as i32;
+                let label_cols = self.nodes[id].label.chars().count() as i32;
+                // prefix = depth*2 cols (each level adds 2)  |  "> " = 2 cols
+                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols;
             }
             order.extend(local);
         }

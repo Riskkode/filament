@@ -10,6 +10,9 @@ pub struct Node {
     pub row:       usize,
     /// World-space anchor. Root nodes are freely positioned; children derive
     /// their position from `(root.world_x, root.world_y + local_row)`.
-    pub world_x:   i32,
-    pub world_y:   i32,
+    pub world_x:     i32,
+    pub world_y:     i32,
+    /// Right anchor: world_x + depth*2 + 2 + label.chars().count().
+    /// Recomputed every frame by recompute_layout; initialise to 0.
+    pub world_x_end: i32,
 }

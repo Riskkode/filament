@@ -80,7 +80,7 @@ impl App {
             self.nodes.push(Node {
                 label: buf, parent: None, children: vec![], links: vec![],
                 collapsed: false, row: usize::MAX,
-                world_x: self.cursor_x, world_y: self.cursor_y,
+                world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
             });
             self.selected = id;
         }
