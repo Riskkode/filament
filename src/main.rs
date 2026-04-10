@@ -12,7 +12,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
-use app::{App, CanvasState, InputAction, Mode};
+use app::{App, ArrowFidelity, CanvasState, InputAction, Mode};
 use ui::draw::draw;
 
 fn main() -> io::Result<()> {
@@ -68,12 +68,59 @@ fn main() -> io::Result<()> {
                     // New sub-state: all keystrokes go to the text buffer.
                     if matches!(&app.mode, Mode::Canvas { state: CanvasState::New { .. } }) {
                         match key.code {
-                            KeyCode::Enter     => app.canvas_confirm_new(),
+                            KeyCode::Enter     => {
+                                app.canvas_confirm_new();
+                                // If a root node was created we're now in InsertChild — scroll to it.
+                                if matches!(&app.mode, Mode::Input { action: InputAction::InsertChild { .. }, .. }) {
+                                    app.scroll_to_input(canvas_h);
+                                }
+                            }
                             KeyCode::Esc       => app.canvas_cancel_sub(),
                             KeyCode::Backspace => app.canvas_new_backspace(),
                             KeyCode::Left      => app.canvas_new_move_cursor(-1),
                             KeyCode::Right     => app.canvas_new_move_cursor(1),
                             KeyCode::Char(c)   => app.canvas_new_char(c),
+                            _ => {}
+                        }
+                    } else if matches!(&app.mode,
+                        Mode::Canvas { state: CanvasState::Menu }
+                        | Mode::Canvas { state: CanvasState::MenuIncoming }
+                        | Mode::Canvas { state: CanvasState::MenuOutgoing })
+                    {
+                        match &app.mode {
+                            Mode::Canvas { state: CanvasState::Menu } => match key.code {
+                                KeyCode::Char('i') => app.mode = Mode::Canvas { state: CanvasState::MenuIncoming },
+                                KeyCode::Char('o') => app.mode = Mode::Canvas { state: CanvasState::MenuOutgoing },
+                                KeyCode::Char('g') => { app.arrow.global = !app.arrow.global; }
+                                KeyCode::Char('F') | KeyCode::Esc => {
+                                    app.mode = Mode::Canvas { state: CanvasState::Browse };
+                                }
+                                _ => {}
+                            },
+                            Mode::Canvas { state: CanvasState::MenuIncoming } => match key.code {
+                                KeyCode::Char('T') | KeyCode::Char('t') => {
+                                    app.arrow.incoming = ArrowFidelity::Tree;
+                                    app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                }
+                                KeyCode::Char('S') | KeyCode::Char('s') => {
+                                    app.arrow.incoming = ArrowFidelity::Selected;
+                                    app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                }
+                                KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Menu },
+                                _ => {}
+                            },
+                            Mode::Canvas { state: CanvasState::MenuOutgoing } => match key.code {
+                                KeyCode::Char('T') | KeyCode::Char('t') => {
+                                    app.arrow.outgoing = ArrowFidelity::Tree;
+                                    app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                }
+                                KeyCode::Char('S') | KeyCode::Char('s') => {
+                                    app.arrow.outgoing = ArrowFidelity::Selected;
+                                    app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                }
+                                KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Menu },
+                                _ => {}
+                            },
                             _ => {}
                         }
                     } else {
@@ -97,14 +144,19 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::SHIFT, KeyCode::Char('J')) => app.cursor_warp( 0,  1, canvas_w, canvas_h as u16),
 
                             // ── Node operations ───────────────────────────────
-                            (KeyModifiers::NONE, KeyCode::Char('i'))  => app.enter_insert(),
+                            (KeyModifiers::NONE, KeyCode::Char('i'))  => {
+                                if app.has_selection() { app.enter_insert(); }
+                                else                   { app.canvas_start_new(); }
+                            }
                             (KeyModifiers::NONE, KeyCode::Char('e'))  => app.enter_edit(),
                             (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.enter_overwrite(),
                             (KeyModifiers::NONE, KeyCode::Char('v'))  => app.enter_reparent(),
                             (KeyModifiers::NONE, KeyCode::Char('x'))  => app.delete_selected(),
-                            (KeyModifiers::NONE, KeyCode::Char('n'))  => app.canvas_start_new(),
-                            (KeyModifiers::NONE, KeyCode::Char('p'))  => app.canvas_pick_or_place(),
+(KeyModifiers::NONE, KeyCode::Char('p'))  => app.canvas_pick_or_place(),
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
+                            (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
+                                app.mode = Mode::Canvas { state: CanvasState::Menu };
+                            }
 
                             // ── Structure ─────────────────────────────────────
                             (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); }

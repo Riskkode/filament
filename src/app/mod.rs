@@ -4,11 +4,12 @@ mod delete;
 mod input;
 mod reparent;
 
-pub use mode::{CanvasState, InputAction, Mode};
+pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode};
 
 use crate::models::node::Node;
 
 pub struct App {
+    pub arrow:    ArrowSettings,
     pub nodes:    Vec<Node>,
     /// The node currently under (or nearest to) the world cursor.
     /// Valid only when `has_selection()` is true.
@@ -24,6 +25,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
+            arrow:    ArrowSettings::default(),
             nodes:    vec![],
             selected: 0,
             camera_x: 0,

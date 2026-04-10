@@ -48,6 +48,18 @@ pub fn build_title(mode: &Mode) -> Line<'static> {
             "LINK", pal::LINK,
             "hjkl:navigate  Enter:toggle link  Esc:cancel",
         ),
+        Mode::Canvas { state: CanvasState::Menu } => modal_title(
+            "ARROWS", pal::CANVAS,
+            "i:incoming  o:outgoing  g:global  F/Esc:close",
+        ),
+        Mode::Canvas { state: CanvasState::MenuIncoming } => modal_title(
+            "ARROWS › INCOMING", pal::CANVAS,
+            "T:tree  S:selected  Esc:back",
+        ),
+        Mode::Canvas { state: CanvasState::MenuOutgoing } => modal_title(
+            "ARROWS › OUTGOING", pal::CANVAS,
+            "T:tree  S:selected  Esc:back",
+        ),
     }
 }
 

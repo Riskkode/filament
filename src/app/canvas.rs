@@ -1,4 +1,4 @@
-use super::{App, CanvasState, Mode};
+use super::{App, CanvasState, InputAction, Mode};
 use crate::models::node::Node;
 
 impl App {
@@ -83,8 +83,15 @@ impl App {
                 world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
             });
             self.selected = id;
+            // Chain straight into insert-child so editing continues normally.
+            self.mode = Mode::Input {
+                action: InputAction::InsertChild { parent: id },
+                buf: String::new(),
+                cursor: 0,
+            };
+        } else {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
         }
-        self.mode = Mode::Canvas { state: CanvasState::Browse };
     }
 
     // ── Links ─────────────────────────────────────────────────────────────────

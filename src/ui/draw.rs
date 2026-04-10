@@ -1,4 +1,4 @@
-use crate::app::{App, CanvasState, InputAction, Mode};
+use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode};
 use crate::ui::palette as pal;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
@@ -11,14 +11,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
+use std::collections::HashSet;
 use std::io;
 
 pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     let order   = app.recompute_layout();
     let is_last = compute_is_last(&order);
 
-    // Build visible-node bounds for obstacle-aware routing:
-    // (world_x, world_y, world_x_end) for every node currently in the layout.
+    // Visible-node bounds for obstacle-aware routing and incoming arrow scans.
     let visible_nodes: Vec<(i32, i32, i32)> = app.nodes.iter()
         .filter(|n| n.row != usize::MAX)
         .map(|n| (n.world_x, n.world_y, n.world_x_end))
@@ -43,34 +43,81 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             height: area.height.saturating_sub(3),
         };
 
-        // ── Persistent link arrows (single buffered pass) ─────────────────────
-        // Arrows are routed first and obstacle-aware, then flushed before nodes
-        // so that node text naturally renders on top without any visual conflict.
-        let mut arrow_buf = ArrowBuf::new();
-        if app.has_selection() {
-            let mut root = app.selected;
-            while let Some(p) = app.nodes[root].parent { root = p; }
-            let tree = app.collect_subtree(root);
-            for src_id in tree {
-                for tgt_id in app.nodes[src_id].links.clone() {
+        // ── Global arrow layer ────────────────────────────────────────────────
+        // When Global is on, render every visible link in a dim colour first so
+        // the graph structure is always visible behind the highlighted subset.
+        if app.arrow.global {
+            let mut global_buf = ArrowBuf::new();
+            for node in app.nodes.iter() {
+                if node.row == usize::MAX { continue; }
+                for &tgt_id in &node.links {
                     if tgt_id < app.nodes.len() && app.nodes[tgt_id].row != usize::MAX {
                         route_link_into_buf(
-                            &mut arrow_buf, canvas, app.camera_x, app.camera_y,
+                            &mut global_buf, canvas, app.camera_x, app.camera_y,
                             &visible_nodes,
-                            app.nodes[src_id].world_x,
-                            app.nodes[src_id].world_y,
-                            app.nodes[src_id].world_x_end,
-                            app.nodes[tgt_id].world_x,
-                            app.nodes[tgt_id].world_y,
+                            node.world_x, node.world_y, node.world_x_end,
+                            app.nodes[tgt_id].world_x, app.nodes[tgt_id].world_y,
                             app.nodes[tgt_id].world_x_end,
                         );
                     }
                 }
             }
+            global_buf.flush(frame, canvas, pal::tinted(pal::ARROW_DIM));
+        }
+
+        // ── Highlighted arrow layer ───────────────────────────────────────────
+        // Draws the subset of arrows determined by incoming/outgoing fidelity.
+        if app.has_selection() {
+            let mut root = app.selected;
+            while let Some(p) = app.nodes[root].parent { root = p; }
+            let tree: Vec<usize> = app.collect_subtree(root);
+            let tree_set: HashSet<usize> = tree.iter().copied().collect();
+
+            let out_sources: HashSet<usize> = match app.arrow.outgoing {
+                ArrowFidelity::Tree     => tree_set.clone(),
+                ArrowFidelity::Selected => HashSet::from([app.selected]),
+            };
+            let in_targets: HashSet<usize> = match app.arrow.incoming {
+                ArrowFidelity::Tree     => tree_set.clone(),
+                ArrowFidelity::Selected => HashSet::from([app.selected]),
+            };
+
+            // Collect (src, tgt) pairs, deduplicated.
+            let mut pairs: HashSet<(usize, usize)> = HashSet::new();
+            for &src_id in &out_sources {
+                for &tgt_id in &app.nodes[src_id].links {
+                    if tgt_id < app.nodes.len() && app.nodes[tgt_id].row != usize::MAX {
+                        pairs.insert((src_id, tgt_id));
+                    }
+                }
+            }
+            for (src_id, node) in app.nodes.iter().enumerate() {
+                if node.row == usize::MAX { continue; }
+                for &tgt_id in &node.links {
+                    if in_targets.contains(&tgt_id)
+                        && tgt_id < app.nodes.len()
+                        && app.nodes[tgt_id].row != usize::MAX
+                    {
+                        pairs.insert((src_id, tgt_id));
+                    }
+                }
+            }
+
+            let mut arrow_buf = ArrowBuf::new();
+            for (src_id, tgt_id) in pairs {
+                route_link_into_buf(
+                    &mut arrow_buf, canvas, app.camera_x, app.camera_y,
+                    &visible_nodes,
+                    app.nodes[src_id].world_x, app.nodes[src_id].world_y,
+                    app.nodes[src_id].world_x_end,
+                    app.nodes[tgt_id].world_x, app.nodes[tgt_id].world_y,
+                    app.nodes[tgt_id].world_x_end,
+                );
+            }
             arrow_buf.flush(frame, canvas, pal::tinted(pal::LINK_ARROW));
         }
 
-        // ── Link mode preview arrow (separate buf, drawn on top) ──────────────
+        // ── Link mode preview arrow ───────────────────────────────────────────
         if let Mode::Canvas { state: CanvasState::Link { origin_id } } = app.mode {
             let mut prev = ArrowBuf::new();
             route_link_into_buf(
@@ -85,7 +132,6 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
 
         // ── Bullet lists ──────────────────────────────────────────────────────
-        // Rendered after arrows so node text naturally wins over any arrow cell.
         let mut trail: Vec<bool> = Vec::new();
 
         for (idx, &(id, depth)) in order.iter().enumerate() {
@@ -224,6 +270,9 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             }
         }
 
+        // ── Arrow settings menu overlay ───────────────────────────────────────
+        draw_arrow_menu(frame, canvas, app);
+
         // ── Status bar ────────────────────────────────────────────────────────
         let status = build_status(app);
         frame.render_widget(
@@ -235,6 +284,68 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
+
+fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
+    let in_menu = matches!(&app.mode,
+        Mode::Canvas { state: CanvasState::Menu | CanvasState::MenuIncoming | CanvasState::MenuOutgoing });
+    if !in_menu { return; }
+
+    let fid = |f: ArrowFidelity| match f {
+        ArrowFidelity::Tree     => "Tree    ",
+        ArrowFidelity::Selected => "Selected",
+    };
+    let tog = |b: bool| if b { "ON " } else { "off" };
+
+    let hint = match &app.mode {
+        Mode::Canvas { state: CanvasState::MenuIncoming } =>
+            "  Set: [T]ree  [S]elected  Esc=back",
+        Mode::Canvas { state: CanvasState::MenuOutgoing } =>
+            "  Set: [T]ree  [S]elected  Esc=back",
+        _ =>
+            "  [i]ncoming  [o]utgoing  [g]lobal  [F]/Esc=close",
+    };
+
+    let incoming_style = if matches!(&app.mode, Mode::Canvas { state: CanvasState::MenuIncoming }) {
+        pal::solid(pal::LINK_ARROW)
+    } else {
+        pal::tinted(pal::LINK_ARROW)
+    };
+    let outgoing_style = if matches!(&app.mode, Mode::Canvas { state: CanvasState::MenuOutgoing }) {
+        pal::solid(pal::LINK_ARROW)
+    } else {
+        pal::tinted(pal::LINK_ARROW)
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::raw(" [g] Global   "),
+            Span::styled(tog(app.arrow.global), pal::tinted(pal::LINK_ARROW)),
+        ]),
+        Line::from(vec![
+            Span::raw(" [i] Incoming "),
+            Span::styled(fid(app.arrow.incoming), incoming_style),
+        ]),
+        Line::from(vec![
+            Span::raw(" [o] Outgoing "),
+            Span::styled(fid(app.arrow.outgoing), outgoing_style),
+        ]),
+        Line::from(Span::styled(hint, Style::default().fg(pal::DIM))),
+    ];
+
+    let w: u16 = 52;
+    let h: u16 = lines.len() as u16 + 2;
+    let x = canvas.x + canvas.width.saturating_sub(w + 1);
+    let y = canvas.y;
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default()
+                .borders(Borders::ALL)
+                .title(" Arrow Display ")
+                .border_style(pal::tinted(pal::CANVAS))),
+        Rect { x, y, width: w, height: h },
+    );
+}
 
 fn render_input_line(
     frame: &mut ratatui::Frame,
@@ -278,6 +389,12 @@ fn build_status(app: &App) -> String {
             format!(" editing \"{}\" → \"{}\" ", app.nodes[*node].label, buf),
         Mode::Reparent { subject, cursor, .. } =>
             format!(" reparenting \"{}\" → child of \"{}\" ", app.nodes[*subject].label, app.nodes[*cursor].label),
+        Mode::Canvas { state: CanvasState::Menu | CanvasState::MenuIncoming | CanvasState::MenuOutgoing } =>
+            format!(" arrow display │ global {} │ incoming {} │ outgoing {} ",
+                if app.arrow.global { "ON" } else { "off" },
+                match app.arrow.incoming { ArrowFidelity::Tree => "tree", ArrowFidelity::Selected => "selected" },
+                match app.arrow.outgoing { ArrowFidelity::Tree => "tree", ArrowFidelity::Selected => "selected" },
+            ),
         Mode::Canvas { state: CanvasState::Browse } => {
             if app.has_selection() {
                 let node  = &app.nodes[app.selected];

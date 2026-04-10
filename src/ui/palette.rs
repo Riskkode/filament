@@ -12,6 +12,8 @@ pub const PICK:     Color = Color::Magenta;
 pub const LINK:     Color = Color::LightGreen;
 /// Dimmer shade used for persistent link arrows in browse mode.
 pub const LINK_ARROW: Color = Color::Green;
+/// Very dim colour for global-mode background arrows (all links, unselected).
+pub const ARROW_DIM:  Color = Color::DarkGray;
 
 // ── Node / tree colours ───────────────────────────────────────────────────────
 
