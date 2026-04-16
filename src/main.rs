@@ -1,6 +1,7 @@
 mod app;
 mod db;
 mod models;
+mod persistence;
 mod repositories;
 mod ui;
 
@@ -12,7 +13,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
-use app::{App, ArrowFidelity, CanvasState, InputAction, Mode};
+use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, ProjectListState};
 use ui::draw::draw;
 
 fn main() -> io::Result<()> {
@@ -31,12 +32,40 @@ fn main() -> io::Result<()> {
             let canvas_h = th.saturating_sub(3) as usize;
 
             match app.mode {
+                // ── Project list ──────────────────────────────────────────────
+                Mode::ProjectList { .. } => {
+                    if matches!(&app.mode, Mode::ProjectList { state: ProjectListState::Browse { .. } }) {
+                        match (key.modifiers, key.code) {
+                            (_, KeyCode::Char('q'))                                        => break,
+                            (_, KeyCode::Enter)                                            => app.project_list_open_selected(),
+                            (KeyModifiers::NONE, KeyCode::Char('n'))                       => app.project_list_start_new(),
+                            (KeyModifiers::NONE, KeyCode::Char('d'))                       => app.project_list_remove_selected(),
+                            (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.project_list_nav(1),
+                            (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.project_list_nav(-1),
+                            (_, KeyCode::Esc)                                              => app.project_list_cancel(),
+                            _ => {}
+                        }
+                    } else {
+                        // NewPath / NewName input.
+                        match key.code {
+                            KeyCode::Enter     => app.project_list_confirm(),
+                            KeyCode::Esc       => app.project_list_cancel(),
+                            KeyCode::Backspace => app.project_list_backspace(),
+                            KeyCode::Left      => app.project_list_move_cursor(-1),
+                            KeyCode::Right     => app.project_list_move_cursor(1),
+                            KeyCode::Char(c)   => app.project_list_input_char(c),
+                            _ => {}
+                        }
+                    }
+                }
+
                 // ── Input (insert + edit) ─────────────────────────────────────
                 Mode::Input { .. } => match key.code {
                     KeyCode::Enter => {
                         let is_insert = matches!(&app.mode,
                             Mode::Input { action: InputAction::InsertChild { .. }, .. });
                         app.confirm_input();
+                        app.save_project();
                         if is_insert { app.scroll_to_input(canvas_h); }
                     }
                     KeyCode::Esc       => app.cancel_input(),
@@ -54,7 +83,7 @@ fn main() -> io::Result<()> {
                     app.recompute_layout();
                     match (key.modifiers, key.code) {
                         (_, KeyCode::Esc)                                              => app.cancel_reparent(),
-                        (KeyModifiers::NONE, KeyCode::Char('v')) | (_, KeyCode::Enter) => app.confirm_reparent(),
+                        (KeyModifiers::NONE, KeyCode::Char('v')) | (_, KeyCode::Enter) => { app.confirm_reparent(); app.save_project(); }
                         (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => { app.reparent_nav_vertical(1);  app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => { app.reparent_nav_vertical(-1); app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => { app.reparent_nav_parent();     app.scroll_to_selected(canvas_h); }
@@ -91,7 +120,7 @@ fn main() -> io::Result<()> {
                             Mode::Canvas { state: CanvasState::Menu } => match key.code {
                                 KeyCode::Char('i') => app.mode = Mode::Canvas { state: CanvasState::MenuIncoming },
                                 KeyCode::Char('o') => app.mode = Mode::Canvas { state: CanvasState::MenuOutgoing },
-                                KeyCode::Char('g') => { app.arrow.global = !app.arrow.global; }
+                                KeyCode::Char('g') => { app.arrow.global = !app.arrow.global; app.save_project(); }
                                 KeyCode::Char('F') | KeyCode::Esc => {
                                     app.mode = Mode::Canvas { state: CanvasState::Browse };
                                 }
@@ -101,10 +130,12 @@ fn main() -> io::Result<()> {
                                 KeyCode::Char('T') | KeyCode::Char('t') => {
                                     app.arrow.incoming = ArrowFidelity::Tree;
                                     app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                    app.save_project();
                                 }
                                 KeyCode::Char('S') | KeyCode::Char('s') => {
                                     app.arrow.incoming = ArrowFidelity::Selected;
                                     app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                    app.save_project();
                                 }
                                 KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Menu },
                                 _ => {}
@@ -113,10 +144,12 @@ fn main() -> io::Result<()> {
                                 KeyCode::Char('T') | KeyCode::Char('t') => {
                                     app.arrow.outgoing = ArrowFidelity::Tree;
                                     app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                    app.save_project();
                                 }
                                 KeyCode::Char('S') | KeyCode::Char('s') => {
                                     app.arrow.outgoing = ArrowFidelity::Selected;
                                     app.mode = Mode::Canvas { state: CanvasState::Menu };
+                                    app.save_project();
                                 }
                                 KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Menu },
                                 _ => {}
@@ -126,11 +159,14 @@ fn main() -> io::Result<()> {
                     } else {
                         // Browse + Pick + Link: cursor movement and all top-level actions.
                         match (key.modifiers, key.code) {
-                            (_, KeyCode::Char('q')) => break,
+                            (_, KeyCode::Char('q')) => {
+                                app.save_project();
+                                break;
+                            }
 
                             // ── Link confirmation / cancellation ──────────────
-                            (_, KeyCode::Enter)     => app.canvas_confirm_link(),
-                            (_, KeyCode::Esc)       => app.canvas_cancel_sub(),
+                            (_, KeyCode::Enter) => { app.canvas_confirm_link(); app.save_project(); }
+                            (_, KeyCode::Esc)   => app.canvas_cancel_sub(),
 
                             // ── Cursor movement ───────────────────────────────
                             (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
@@ -151,18 +187,18 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('e'))  => app.enter_edit(),
                             (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.enter_overwrite(),
                             (KeyModifiers::NONE, KeyCode::Char('v'))  => app.enter_reparent(),
-                            (KeyModifiers::NONE, KeyCode::Char('x'))  => app.delete_selected(),
-(KeyModifiers::NONE, KeyCode::Char('p'))  => app.canvas_pick_or_place(),
+                            (KeyModifiers::NONE, KeyCode::Char('x'))  => { app.delete_selected(); app.save_project(); }
+                            (KeyModifiers::NONE, KeyCode::Char('p'))  => { app.canvas_pick_or_place(); app.save_project(); }
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
                             (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
                                 app.mode = Mode::Canvas { state: CanvasState::Menu };
                             }
 
                             // ── Structure ─────────────────────────────────────
-                            (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); }
-                            (KeyModifiers::SHIFT, KeyCode::Char('D')) => { app.indent_decrease(); app.recompute_layout(); }
+                            (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); app.save_project(); }
+                            (KeyModifiers::SHIFT, KeyCode::Char('D')) => { app.indent_decrease(); app.recompute_layout(); app.save_project(); }
                             (KeyModifiers::NONE, KeyCode::Char('z')) | (_, KeyCode::Char(' ')) => {
-                                app.toggle_collapse(); app.recompute_layout();
+                                app.toggle_collapse(); app.recompute_layout(); app.save_project();
                             }
 
                             // ── Camera ────────────────────────────────────────
@@ -173,6 +209,7 @@ fn main() -> io::Result<()> {
                     }
                 }
             }
+
         }
     }
 

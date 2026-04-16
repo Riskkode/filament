@@ -1,4 +1,4 @@
-use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode};
+use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, ProjectListState};
 use crate::ui::palette as pal;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
@@ -15,6 +15,10 @@ use std::collections::HashSet;
 use std::io;
 
 pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
+    if matches!(&app.mode, Mode::ProjectList { .. }) {
+        return draw_project_list(terminal, app);
+    }
+
     let order   = app.recompute_layout();
     let is_last = compute_is_last(&order);
 
@@ -383,6 +387,19 @@ fn build_trail_for(order: &[(usize, usize)], is_last: &[bool], idx: usize, depth
 
 fn build_status(app: &App) -> String {
     match &app.mode {
+        Mode::ProjectList { state: ProjectListState::Browse { selected } } => {
+            if let Some(e) = app.registry.projects.get(*selected) {
+                format!(" {} │ {}  │  Enter:open  n:new  d:remove  q:quit ", e.name, e.path)
+            } else if let Some(msg) = &app.status_message {
+                format!(" {} ", msg)
+            } else {
+                String::from(" no projects — press [n] to create one ")
+            }
+        }
+        Mode::ProjectList { state: ProjectListState::NewPath { buf, .. } } =>
+            format!(" new project path: \"{}\" ", buf),
+        Mode::ProjectList { state: ProjectListState::NewName { path, buf, .. } } =>
+            format!(" new project \"{}\" at {} ", buf, path),
         Mode::Input { action: InputAction::InsertChild { parent }, buf, .. } =>
             format!(" inserting under \"{}\" │ \"{}\" ", app.nodes[*parent].label, buf),
         Mode::Input { action: InputAction::EditLabel { node } | InputAction::Overwrite { node }, buf, .. } =>
@@ -422,4 +439,87 @@ fn build_status(app: &App) -> String {
                 app.nodes[*origin_id].label, target, existing)
         }
     }
+}
+
+// ── Project list screen ───────────────────────────────────────────────────────
+
+fn draw_project_list(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &App,
+) -> io::Result<()> {
+    terminal.draw(|frame| {
+        let area = frame.area();
+
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(titlebar::border_style(&app.mode))
+                .title(titlebar::build_title(&app.mode)),
+            area,
+        );
+
+        let inner = Rect {
+            x:      area.x + 1,
+            y:      area.y + 1,
+            width:  area.width.saturating_sub(2),
+            height: area.height.saturating_sub(3),
+        };
+
+        let selected_idx = match &app.mode {
+            Mode::ProjectList { state: ProjectListState::Browse { selected } } => Some(*selected),
+            _ => None,
+        };
+
+        if app.registry.projects.is_empty() {
+            frame.render_widget(
+                Paragraph::new("  No projects yet. Press [n] to create one.")
+                    .style(Style::default().fg(pal::DIM)),
+                Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 },
+            );
+        } else {
+            for (i, entry) in app.registry.projects.iter().enumerate() {
+                if i as u16 >= inner.height.saturating_sub(1) { break; }
+                let is_sel = selected_idx == Some(i);
+                let (indicator, name_style) = if is_sel {
+                    (">", pal::solid(pal::SELECTED))
+                } else {
+                    (" ", pal::tinted(pal::NODE))
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(format!(" {} ", indicator), name_style),
+                        Span::styled(entry.name.clone(), name_style),
+                        Span::styled(format!("  {}", entry.path), Style::default().fg(pal::DIM)),
+                    ])),
+                    Rect { x: inner.x, y: inner.y + i as u16, width: inner.width, height: 1 },
+                );
+            }
+        }
+
+        // Inline input prompt for new-project path / name.
+        let prompt = match &app.mode {
+            Mode::ProjectList { state: ProjectListState::NewPath { buf, cursor } } =>
+                Some(("path: ", buf.as_str(), *cursor, pal::INSERT)),
+            Mode::ProjectList { state: ProjectListState::NewName { buf, cursor, .. } } =>
+                Some(("name: ", buf.as_str(), *cursor, pal::INSERT)),
+            _ => None,
+        };
+        if let Some((prefix, buf, cursor, color)) = prompt {
+            let sy = inner.height.saturating_sub(1);
+            render_input_line(frame, inner, 0, sy, prefix, buf, cursor, color);
+        }
+
+        // Status bar.
+        let status = build_status(app);
+        frame.render_widget(
+            Paragraph::new(status).style(Style::default().fg(Color::DarkGray)),
+            Rect {
+                x:      inner.x,
+                y:      area.y + area.height.saturating_sub(2),
+                width:  inner.width,
+                height: 1,
+            },
+        );
+    })?;
+    Ok(())
 }

@@ -1,4 +1,6 @@
 pub enum Mode {
+    /// Project browser shown on startup and when no project is open.
+    ProjectList { state: ProjectListState },
     /// Ground state. hjkl moves the world cursor; everything else is a
     /// sub-mode entered from here.
     Canvas   { state: CanvasState },
@@ -36,6 +38,17 @@ impl Default for ArrowSettings {
             outgoing: ArrowFidelity::Tree,
         }
     }
+}
+
+// ── Project list sub-states ───────────────────────────────────────────────────
+
+pub enum ProjectListState {
+    /// Browsing the registry; `selected` is the highlighted index.
+    Browse { selected: usize },
+    /// User is typing a filesystem path for the new project directory.
+    NewPath { buf: String, cursor: usize },
+    /// Path confirmed; user is typing the project name (pre-filled from dir name).
+    NewName { path: String, buf: String, cursor: usize },
 }
 
 // ── Canvas sub-states ─────────────────────────────────────────────────────────

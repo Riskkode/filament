@@ -2,11 +2,15 @@ mod mode;
 mod canvas;
 mod delete;
 mod input;
+mod project_list;
 mod reparent;
 
-pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode};
+pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, ProjectListState};
 
 use crate::models::node::Node;
+use crate::persistence::project::ProjectSettings;
+use crate::persistence::registry::Registry;
+use std::path::PathBuf;
 
 pub struct App {
     pub arrow:    ArrowSettings,
@@ -20,6 +24,18 @@ pub struct App {
     pub cursor_x: i32,
     pub cursor_y: i32,
     pub mode:     Mode,
+
+    // ── Persistence ───────────────────────────────────────────────────────────
+    /// Path to the open project's root directory (where `.filament/` lives).
+    pub project_path: Option<PathBuf>,
+    /// Display name of the open project.
+    pub project_name: String,
+    /// Unix timestamp from project.toml — preserved across saves.
+    pub project_created_at: u64,
+    /// Global project registry loaded from `~/.config/filament/registry.toml`.
+    pub registry: Registry,
+    /// Transient message shown in the status bar (errors, hints).
+    pub status_message: Option<String>,
 }
 
 impl App {
@@ -32,8 +48,124 @@ impl App {
             camera_y: 0,
             cursor_x: 0,
             cursor_y: 0,
-            mode:     Mode::Canvas { state: CanvasState::Browse },
+            mode:     Mode::ProjectList { state: ProjectListState::Browse { selected: 0 } },
+            project_path:       None,
+            project_name:       String::new(),
+            project_created_at: 0,
+            registry:           Registry::load(),
+            status_message:     None,
         }
+    }
+
+    // ── Persistence ───────────────────────────────────────────────────────────
+
+    /// Open an existing project: reads `project.toml` and `canvas.db` from
+    /// `<base>/.filament/` and applies the state to `self`.
+    pub fn load_project(&mut self, base: &std::path::Path) {
+        use crate::db::connection;
+        use crate::repositories::node_repository;
+
+        let settings = match ProjectSettings::load(base) {
+            Ok(s) => s,
+            Err(e) => { self.status_message = Some(format!("load error: {e}")); return; }
+        };
+
+        let db_path = crate::persistence::project::db_path(base);
+        let conn = match connection::open(&db_path) {
+            Ok(c) => c,
+            Err(e) => { self.status_message = Some(format!("db error: {e}")); return; }
+        };
+
+        let (nodes, id_to_idx) = match node_repository::load(&conn) {
+            Ok(r) => r,
+            Err(e) => { self.status_message = Some(format!("load error: {e}")); return; }
+        };
+
+        self.nodes    = nodes;
+        self.camera_x = settings.view.camera_x;
+        self.camera_y = settings.view.camera_y;
+        self.cursor_x = settings.view.cursor_x;
+        self.cursor_y = settings.view.cursor_y;
+        self.selected = id_to_idx.get(&settings.view.selected_db_id).copied().unwrap_or(0);
+        self.arrow    = ArrowSettings {
+            global:   settings.arrows.global,
+            incoming: if settings.arrows.incoming == "Selected" { ArrowFidelity::Selected } else { ArrowFidelity::Tree },
+            outgoing: if settings.arrows.outgoing == "Selected" { ArrowFidelity::Selected } else { ArrowFidelity::Tree },
+        };
+        self.project_path       = Some(base.to_path_buf());
+        self.project_name       = settings.name;
+        self.project_created_at = settings.created_at;
+        self.status_message     = None;
+        self.mode               = Mode::Canvas { state: CanvasState::Browse };
+    }
+
+    /// Persist the current canvas state to `<project_path>/.filament/`.
+    /// Silent no-op when no project is open.
+    pub fn save_project(&self) {
+        use crate::db::connection;
+        use crate::repositories::node_repository;
+
+        let Some(base) = &self.project_path else { return };
+
+        let db_path = crate::persistence::project::db_path(base);
+        let mut conn = match connection::open(&db_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let idx_to_id = match node_repository::save(&mut conn, &self.nodes) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        let selected_db_id = idx_to_id.get(self.selected).copied().unwrap_or(0);
+
+        let settings = ProjectSettings {
+            name:       self.project_name.clone(),
+            created_at: self.project_created_at,
+            view: crate::persistence::project::ViewState {
+                camera_x:       self.camera_x,
+                camera_y:       self.camera_y,
+                cursor_x:       self.cursor_x,
+                cursor_y:       self.cursor_y,
+                selected_db_id,
+            },
+            arrows: crate::persistence::project::SavedArrows {
+                global:   self.arrow.global,
+                incoming: match self.arrow.incoming { ArrowFidelity::Tree => "Tree", ArrowFidelity::Selected => "Selected" }.into(),
+                outgoing: match self.arrow.outgoing { ArrowFidelity::Tree => "Tree", ArrowFidelity::Selected => "Selected" }.into(),
+            },
+        };
+
+        let _ = settings.save(base);
+    }
+
+    /// Initialise a new project on disk, register it, and open it.
+    pub fn create_project(&mut self, base: &std::path::Path, name: &str) {
+        use crate::db::connection;
+        use crate::persistence::registry::ProjectEntry;
+
+        // Create the .filament/ directory and an empty canvas.db.
+        let db_path = crate::persistence::project::db_path(base);
+        match connection::open(&db_path) {
+            Ok(_) => {}
+            Err(e) => { self.status_message = Some(format!("init error: {e}")); return; }
+        }
+
+        // Write initial project.toml.
+        let settings = ProjectSettings::new(name);
+        if let Err(e) = settings.save(base) {
+            self.status_message = Some(format!("init error: {e}"));
+            return;
+        }
+
+        // Register and open.
+        self.registry.add_project(ProjectEntry {
+            name: name.to_string(),
+            path: base.to_string_lossy().into_owned(),
+        });
+        let _ = self.registry.save();
+        self.load_project(base);
     }
 
     pub fn has_selection(&self) -> bool {

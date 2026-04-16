@@ -1,4 +1,4 @@
-use crate::app::{CanvasState, InputAction, Mode};
+use crate::app::{CanvasState, InputAction, Mode, ProjectListState};
 use crate::ui::palette as pal;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,6 +10,7 @@ pub fn border_style(mode: &Mode) -> Style {
 
 fn mode_color(mode: &Mode) -> Color {
     match mode {
+        Mode::ProjectList { .. }                                       => pal::CANVAS,
         Mode::Input { action: InputAction::InsertChild { .. }, .. }    => pal::INSERT,
         Mode::Input { .. }                                             => pal::EDIT,
         Mode::Reparent { .. }                                          => pal::REPARENT,
@@ -22,6 +23,15 @@ fn mode_color(mode: &Mode) -> Color {
 /// Title line rendered inside the top border of the outer frame.
 pub fn build_title(mode: &Mode) -> Line<'static> {
     match mode {
+        Mode::ProjectList { state: ProjectListState::Browse { .. } } => project_list_title(),
+        Mode::ProjectList { state: ProjectListState::NewPath { .. } } => modal_title(
+            "NEW PROJECT", pal::INSERT,
+            "enter directory path  Enter:confirm  Esc:cancel",
+        ),
+        Mode::ProjectList { state: ProjectListState::NewName { .. } } => modal_title(
+            "NEW PROJECT", pal::INSERT,
+            "enter project name  Enter:confirm  Esc:cancel",
+        ),
         Mode::Canvas { state: CanvasState::Browse } => canvas_title(),
 
         Mode::Input { action: InputAction::InsertChild { .. }, .. } => modal_title(
@@ -64,6 +74,18 @@ pub fn build_title(mode: &Mode) -> Line<'static> {
 }
 
 // ── Builders ──────────────────────────────────────────────────────────────────
+
+fn project_list_title() -> Line<'static> {
+    Line::from(vec![
+        Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
+        sep(),
+        bracket("Enter", pal::CANVAS), Span::styled(" open  ", pal::tinted(pal::CANVAS)),
+        bracket("n",     pal::INSERT), Span::styled(" new  ",  pal::tinted(pal::INSERT)),
+        bracket("d",     pal::EDIT),   Span::styled(" remove  ", pal::tinted(pal::EDIT)),
+        sep(),
+        Span::styled("[q] quit ", Style::default().fg(Color::DarkGray)),
+    ])
+}
 
 /// Canvas (ground state): mode triggers + command keys.
 fn canvas_title() -> Line<'static> {
