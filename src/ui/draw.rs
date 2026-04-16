@@ -211,7 +211,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
         // ── Canvas pick arrow ─────────────────────────────────────────────────
         if let Mode::Canvas {
-            state: CanvasState::Pick { origin_id, origin_x, origin_y } } = app.mode
+            state: CanvasState::Pick { origin_id, origin_x, origin_y, .. } } = app.mode
         {
             let ox_end = app.nodes[origin_id].world_x_end;
             let mut pick_buf = ArrowBuf::new();
@@ -275,8 +275,24 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             }
         }
 
+        // ── Canvas new-node inline prompt ─────────────────────────────────────
+        if let Mode::Canvas { state: CanvasState::Pick { origin_id, origin_x, origin_y, .. } } = app.mode {
+            let sx = origin_x - app.camera_x;
+            let sy = origin_y - app.camera_y;
+            if sx >= 0 && sy >= 0 {
+                let (sx, sy) = (sx as u16, sy as u16);
+                if sx < canvas.width && sy < canvas.height {
+                    let label = &app.nodes[origin_id].label;
+                    frame.render_widget(
+                        Paragraph::new(Span::styled(label.clone(), pal::solid(pal::PICK))),
+                        Rect { x: canvas.x + sx, y: canvas.y + sy, width: label.chars().count() as u16, height: 1 }
+                    );
+                }
+            }
+        }
+
         // ── Goto modal prompt ────────────────────────────────────────────────
-        if let Mode::Canvas { state: CanvasState::Goto { ref buf, cursor, ref matches, match_idx } } = app.mode {
+        if let Mode::Canvas { state: CanvasState::Goto { ref buf, cursor, ref matches, match_idx, .. } } = app.mode {
             let matches_info = if matches.is_empty() {
                 if buf.is_empty() { String::new() } else { "(no matches)".to_string() }
             } else {
@@ -284,6 +300,14 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             };
             let prefix = format!("jump to: {} ", matches_info);
             render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), &prefix, buf, cursor, pal::EDIT);
+        }
+
+        // ── Pick modal prompt ────────────────────────────────────────────────
+        if let Mode::Canvas { state: CanvasState::Pick { ref buf, cursor, .. } } = app.mode {
+            if !buf.is_empty() {
+                let prefix = "move to: ";
+                render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), prefix, buf, cursor, pal::INSERT);
+            }
         }
 
         // ── Arrow settings menu overlay ───────────────────────────────────────
@@ -402,9 +426,9 @@ fn build_status(app: &App) -> String {
     match &app.mode {
         Mode::StartMenu { state: StartMenuState::Main { selected } } => {
             if let Some(n) = app.nodes.get(*selected) {
-                format!(" {} │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q/Q:quit ", n.label)
+                format!(" {} │ Enter:select  e:edit  o/f/s/n/?:jump  j/k:nav  q/Q:quit ", n.label)
             } else {
-                " FILAMENT │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q/Q:quit ".to_string()
+                " FILAMENT │ Enter:select  e:edit  o/f/s/n/?:jump  j/k:nav  q/Q:quit ".to_string()
             }
         }
         Mode::StartMenu { state: StartMenuState::NewPath { buf, .. } } =>
@@ -453,6 +477,8 @@ fn build_status(app: &App) -> String {
         }
         Mode::Canvas { state: CanvasState::Goto { buf, .. } } =>
             format!(" finding node: \"{}\" ", buf),
+        Mode::Help =>
+            " Browsing Help tree │ hjkl:navigate  z:toggle  Esc/?:close ".to_string(),
     }
 }
 
@@ -544,6 +570,7 @@ fn draw_start_menu(
                 else if label_lower.contains("find") { Some("f") }
                 else if label_lower.contains("settings") { Some("s") }
                 else if label_lower.contains("+ new")  { Some("n") }
+                else if label_lower.contains("help")   { Some("?") }
                 else { None }
             } else { None };
 

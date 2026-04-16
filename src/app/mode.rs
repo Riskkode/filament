@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub enum Mode {
     /// Initial menu screen with an ASCII banner and hierarchical options.
     StartMenu { state: StartMenuState },
@@ -6,6 +7,7 @@ pub enum Mode {
     Canvas   { state: CanvasState },
     Input    { action: InputAction, buf: String, cursor: usize },
     Reparent { subject: usize, orig_parent: Option<usize>, orig_pos: usize, cursor: usize },
+    Help,
 }
 
 #[derive(Clone)]
@@ -42,6 +44,7 @@ impl Default for ArrowSettings {
 
 // ── Start menu sub-states ─────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub enum StartMenuState {
     /// Top-level menu: Open Filaments, Search, Settings.
     Main { selected: usize },
@@ -55,14 +58,15 @@ pub enum StartMenuState {
 
 // ── Canvas sub-states ─────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub enum CanvasState {
     Browse,
     New  { buf: String, text_cursor: usize },
-    Pick { origin_id: usize, origin_x: i32, origin_y: i32 },
+    Pick { origin_id: usize, origin_x: i32, origin_y: i32, buf: String, cursor: usize },
     /// Linking: navigate cursor to a target; Enter toggles the link, Esc cancels.
     Link { origin_id: usize },
     /// Quick jump to node by name.
-    Goto { buf: String, cursor: usize, matches: Vec<usize>, match_idx: usize },
+    Goto { buf: String, cursor: usize, matches: Vec<usize>, match_idx: usize, previous: Box<CanvasState> },
     /// Arrow-display settings menu open — waiting for i / o / g / F / Esc.
     Menu,
     /// Menu sub-state: waiting for T or S to set incoming fidelity.

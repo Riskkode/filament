@@ -1,3 +1,6 @@
+use serde::{Serialize, Deserialize};
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Node {
     pub label:     String,
     pub parent:    Option<usize>,

@@ -84,6 +84,7 @@ impl App {
         match action {
             InputAction::InsertChild { parent } => {
                 if buf.is_empty() { self.mode = Mode::Canvas { state: CanvasState::Browse }; return; }
+                self.push_undo();
                 let new_idx = self.nodes.len();
                 self.nodes.push(Node {
                     label: buf, parent: Some(parent), children: vec![], links: vec![],
@@ -98,7 +99,10 @@ impl App {
                 };
             }
             InputAction::EditLabel { node } | InputAction::Overwrite { node } => {
-                if !buf.is_empty() { self.nodes[node].label = buf; }
+                if !buf.is_empty() {
+                    self.push_undo();
+                    self.nodes[node].label = buf;
+                }
                 self.mode = Mode::Canvas { state: CanvasState::Browse };
             }
         }

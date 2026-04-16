@@ -39,6 +39,12 @@ pub fn open(path: &Path) -> Result<Connection> {
             tgt_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
             PRIMARY KEY (src_id, tgt_id)
         );
+
+        CREATE TABLE IF NOT EXISTS history (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            snapshot  TEXT NOT NULL
+        );
     ")?;
 
     Ok(conn)

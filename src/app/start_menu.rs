@@ -20,7 +20,9 @@ impl App {
     }
 
     pub fn start_menu_go_to_label(&mut self, target: &str) {
-        let target_lower = if target == "new" { "+ new".to_string() } else { target.to_lowercase() };
+        let target_lower = if target == "new" { "+ new".to_string() } 
+            else if target == "help" { "help".to_string() }
+            else { target.to_lowercase() };
         if let Some((idx, _)) = self.nodes.iter().enumerate()
             .find(|(_, n)| n.parent.is_none() && n.label.to_lowercase().contains(&target_lower))
         {
@@ -49,6 +51,8 @@ impl App {
                     self.status_message = Some("Find not implemented yet".to_string());
                 } else if label.contains("new") {
                     self.start_menu_start_new();
+                } else if label.contains("help") {
+                    self.canvas_start_help();
                 } else if label.contains("default filaments path") || label.contains("username") {
                     self.start_menu_edit();
                 } else if let Some(parent) = self.nodes[node_id].parent {

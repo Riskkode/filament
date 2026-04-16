@@ -3,6 +3,7 @@ use super::{App, CanvasState, Mode};
 impl App {
     pub fn enter_reparent(&mut self) {
         if !self.has_selection() { return; }
+        self.push_undo();
         let subject     = self.selected;
         let orig_parent = self.nodes[subject].parent;
         let orig_pos    = orig_parent

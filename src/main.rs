@@ -47,6 +47,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('o'))                       => app.start_menu_go_to_label("open"),
                             (KeyModifiers::NONE, KeyCode::Char('f'))                       => app.start_menu_go_to_label("find"),
                             (KeyModifiers::NONE, KeyCode::Char('s'))                       => app.start_menu_go_to_label("settings"),
+                            (KeyModifiers::NONE, KeyCode::Char('?'))                       => app.start_menu_go_to_label("help"),
                             (KeyModifiers::NONE, KeyCode::Char('d'))                       => app.start_menu_remove_selected(),
                             (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.start_menu_nav(1),
                             (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.start_menu_nav(-1),
@@ -73,7 +74,6 @@ fn main() -> io::Result<()> {
                         let is_insert = matches!(&app.mode,
                             Mode::Input { action: InputAction::InsertChild { .. }, .. });
                         app.confirm_input();
-                        app.save_project();
                         if is_insert { app.scroll_to_input(canvas_h); }
                     }
                     KeyCode::Esc       => app.cancel_input(),
@@ -91,11 +91,27 @@ fn main() -> io::Result<()> {
                     app.recompute_layout();
                     match (key.modifiers, key.code) {
                         (_, KeyCode::Esc)                                              => app.cancel_reparent(),
-                        (KeyModifiers::NONE, KeyCode::Char('v')) | (_, KeyCode::Enter) => { app.confirm_reparent(); app.save_project(); }
+                        (KeyModifiers::NONE, KeyCode::Char('v')) | (_, KeyCode::Enter) => { app.confirm_reparent(); }
                         (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => { app.reparent_nav_vertical(1);  app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => { app.reparent_nav_vertical(-1); app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => { app.reparent_nav_parent();     app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => { app.reparent_nav_child();      app.scroll_to_selected(canvas_h); }
+                        _ => {}
+                    }
+                }
+
+                // ── Help ─────────────────────────────────────────────────────
+                Mode::Help => {
+                    match (key.modifiers, key.code) {
+                        (_, KeyCode::Esc) | (KeyModifiers::NONE, KeyCode::Char('?')) => app.canvas_close_help(),
+                        (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down) => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
+                        (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)   => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
+                        (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left) => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
+                        (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
+                        (KeyModifiers::NONE, KeyCode::Enter) | (KeyModifiers::NONE, KeyCode::Char('z')) | (_, KeyCode::Char(' ')) => {
+                            app.toggle_collapse();
+                            app.recompute_layout();
+                        }
                         _ => {}
                     }
                 }
@@ -112,6 +128,23 @@ fn main() -> io::Result<()> {
                             KeyCode::Left      => app.canvas_goto_move_cursor(-1),
                             KeyCode::Right     => app.canvas_goto_move_cursor(1),
                             KeyCode::Char(c)   => app.canvas_goto_input_char(c),
+                            _ => {}
+                        }
+                    }
+                    // Pick sub-state: allow typing coordinates
+                    else if let CanvasState::Pick { .. } = cs {
+                        match (key.modifiers, key.code) {
+                            (_, KeyCode::Enter)     => app.canvas_pick_or_place(),
+                            (_, KeyCode::Esc)       => app.canvas_cancel_sub(),
+                            (_, KeyCode::Backspace) => app.canvas_pick_backspace(),
+                            (KeyModifiers::NONE, KeyCode::Char(c)) if c.is_ascii_digit() || c == ',' || c == '-' => app.canvas_pick_char(c),
+                            
+                            // Allow movement while picking
+                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
+                            
                             _ => {}
                         }
                     }
@@ -189,7 +222,7 @@ fn main() -> io::Result<()> {
                             }
 
                             // ── Link confirmation / cancellation ──────────────
-                            (_, KeyCode::Enter) => { app.canvas_confirm_link(); app.save_project(); }
+                            (_, KeyCode::Enter) => { app.canvas_confirm_link(); }
                             (_, KeyCode::Esc)   => {
                                 if matches!(app.mode, Mode::Canvas { state: CanvasState::Browse }) {
                                     app.quit_to_main_menu();
@@ -199,15 +232,7 @@ fn main() -> io::Result<()> {
                             }
 
                             // ── Cursor movement ───────────────────────────────
-                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => {
-                                if matches!(app.mode, Mode::Canvas { state: CanvasState::Browse })
-                                    && app.node_near_cursor(app.cursor_x, app.cursor_y).is_none()
-                                {
-                                    app.quit_to_main_menu();
-                                } else {
-                                    app.cursor_move(-1, 0, canvas_w, canvas_h as u16);
-                                }
-                            }
+                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
@@ -225,17 +250,20 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('e'))  => app.enter_edit(),
                             (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.enter_overwrite(),
                             (KeyModifiers::NONE, KeyCode::Char('v'))  => app.enter_reparent(),
-                            (KeyModifiers::NONE, KeyCode::Char('x'))  => { app.delete_selected(); app.save_project(); }
-                            (KeyModifiers::NONE, KeyCode::Char('p'))  => { app.canvas_pick_or_place(); app.save_project(); }
+                            (KeyModifiers::NONE, KeyCode::Char('x'))  => { app.delete_selected(); }
+                            (KeyModifiers::NONE, KeyCode::Char('p'))  => { app.canvas_pick_or_place(); }
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
                             (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
+                            (KeyModifiers::NONE, KeyCode::Char('u'))  => app.undo(),
+                            (KeyModifiers::NONE, KeyCode::Char('?'))  => app.canvas_start_help(),
                             (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
+
                                 app.mode = Mode::Canvas { state: CanvasState::Menu };
                             }
 
                             // ── Structure ─────────────────────────────────────
-                            (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); app.save_project(); }
-                            (KeyModifiers::SHIFT, KeyCode::Char('D')) => { app.indent_decrease(); app.recompute_layout(); app.save_project(); }
+                            (KeyModifiers::NONE, KeyCode::Char('d'))  => { app.indent_increase(); app.recompute_layout(); }
+                            (KeyModifiers::SHIFT, KeyCode::Char('D')) => { app.indent_decrease(); app.recompute_layout(); }
                             (KeyModifiers::NONE, KeyCode::Char('z')) | (_, KeyCode::Char(' ')) => {
                                 app.toggle_collapse(); app.recompute_layout(); app.save_project();
                             }
@@ -243,7 +271,11 @@ fn main() -> io::Result<()> {
                             // ── Camera ────────────────────────────────────────
                             (_, KeyCode::Char('c')) => app.center_on_selected(canvas_w, canvas_h as u16),
 
+                            (KeyModifiers::NONE, KeyCode::Tab)   => app.canvas_jump_link(1, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::BackTab) => app.canvas_jump_link(-1, canvas_w, canvas_h as u16),
+
                             _ => {}
+
                         }
                     }
                 }

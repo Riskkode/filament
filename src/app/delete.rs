@@ -4,6 +4,7 @@ use crate::models::node::Node;
 impl App {
     pub fn delete_selected(&mut self) {
         if !self.has_selection() { return; }
+        self.push_undo();
         let target      = self.selected;
         let orig_parent = self.nodes[target].parent;
         let to_delete   = self.collect_subtree(target);

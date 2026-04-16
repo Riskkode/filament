@@ -139,6 +139,35 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
     Ok(idx_to_id)
 }
 
+// ── History ───────────────────────────────────────────────────────────────────
+
+pub fn push_history(conn: &Connection, nodes: &[Node]) -> Result<()> {
+    let json = serde_json::to_string(nodes).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "INSERT INTO history (snapshot) VALUES (?1)",
+        params![json],
+    )?;
+
+    // Keep only last 100
+    conn.execute(
+        "DELETE FROM history WHERE id NOT IN (
+            SELECT id FROM history ORDER BY id DESC LIMIT 100
+        )",
+        [],
+    )?;
+
+    Ok(())
+}
+
+pub fn load_history(conn: &Connection) -> Result<Vec<Vec<Node>>> {
+    let mut stmt = conn.prepare("SELECT snapshot FROM history ORDER BY id ASC")?;
+    let history: Vec<Vec<Node>> = stmt.query_map([], |row| {
+        let json: String = row.get(0)?;
+        Ok(serde_json::from_str(&json).unwrap_or_default())
+    })?.collect::<Result<_>>()?;
+    Ok(history)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Depth-first topological order so parents are always inserted before children.

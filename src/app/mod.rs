@@ -12,6 +12,7 @@ use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
 use std::path::PathBuf;
+use std::collections::HashSet;
 
 pub struct App {
     pub arrow:    ArrowSettings,
@@ -39,6 +40,13 @@ pub struct App {
     pub settings: GlobalSettings,
     /// Transient message shown in the status bar (errors, hints).
     pub status_message: Option<String>,
+    /// Stack of previous node states for undo.
+    pub undo_stack: Vec<Vec<Node>>,
+    /// Track last link origin and index for Tab cycling.
+    pub last_link_origin: Option<usize>,
+    pub last_link_idx:    usize,
+    /// Track previous mode for Help restoration.
+    pub help_previous_mode: Option<Mode>,
 }
 
 impl App {
@@ -58,9 +66,51 @@ impl App {
             registry:           Registry::load(),
             settings:           GlobalSettings::load(),
             status_message:     None,
+            undo_stack:         vec![],
+            last_link_origin:   None,
+            last_link_idx:      0,
+            help_previous_mode: None,
         };
         app.init_main_menu_nodes();
         app
+    }
+
+    pub fn push_undo(&mut self) {
+        // Only push if we have nodes (don't undo the start menu state)
+        if self.project_path.is_none() { return; }
+        
+        // Cap stack size at 50 to prevent excessive memory usage
+        if self.undo_stack.len() >= 50 {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push(self.nodes.clone());
+        self.save_project();
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(prev_nodes) = self.undo_stack.pop() {
+            self.nodes = prev_nodes;
+            self.recompute_layout();
+            self.save_project();
+
+            // When we undo, save_project pushes the current state to history.
+            // But we actually want to pop the history in the DB too.
+            // Since save_project just pushed, the "undone" state is now at the top.
+            // We should remove the entry that was just pushed by save_project,
+            // AND the entry that we just popped from self.undo_stack.
+            // Actually, if we just want to revert, removing the last 2 entries from DB 
+            // after save_project() might be what's needed to stay in sync.
+            if let Some(base) = &self.project_path {
+                let db_path = crate::persistence::project::db_path(base);
+                if let Ok(conn) = crate::db::connection::open(&db_path) {
+                    let _ = conn.execute("DELETE FROM history WHERE id IN (SELECT id FROM history ORDER BY id DESC LIMIT 2)", []);
+                }
+            }
+
+            self.status_message = Some("Undo applied".to_string());
+        } else {
+            self.status_message = Some("Nothing to undo".to_string());
+        }
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -101,13 +151,18 @@ impl App {
         self.project_path       = Some(base.to_path_buf());
         self.project_name       = settings.name;
         self.project_created_at = settings.created_at;
+
+        if let Ok(history) = node_repository::load_history(&conn) {
+            self.undo_stack = history;
+        }
+
         self.status_message     = None;
         self.mode               = Mode::Canvas { state: CanvasState::Browse };
     }
 
     /// Persist the current canvas state to `<project_path>/.filament/`.
     /// Silent no-op when no project is open.
-    pub fn save_project(&self) {
+    pub fn save_project(&mut self) {
         use crate::db::connection;
         use crate::repositories::node_repository;
 
@@ -123,6 +178,9 @@ impl App {
             Ok(m) => m,
             Err(_) => return,
         };
+        
+        // Save to history too
+        let _ = node_repository::push_history(&conn, &self.nodes);
 
         let selected_db_id = idx_to_id.get(self.selected).copied().unwrap_or(0);
 
@@ -277,6 +335,19 @@ impl App {
         });
         self.nodes[settings_idx].children.push(user_idx);
 
+        // 5. Root: Help
+        self.nodes.push(Node {
+            label: "❓ Help".to_string(),
+            parent: None,
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: self.nodes.len(),
+            world_x: 0,
+            world_y: self.nodes.len() as i32,
+            world_x_end: 0,
+        });
+
         self.selected = 0;
     }
 
@@ -303,17 +374,45 @@ impl App {
             .filter(|&i| self.nodes[i].parent.is_none())
             .collect();
 
+        // ── Insertion offset ──────────────────────────────────────────────────
+        // We only push down nodes within the SAME hierarchy where the insertion is happening.
         for root in roots {
-            let offset = order.len();
+            let start_row = order.len();
             let mut local: Vec<(usize, usize)> = Vec::new();
             Self::collect_visible_inner(&mut self.nodes, root, 0, &mut local);
+            
             let (rx, ry) = (self.nodes[root].world_x, self.nodes[root].world_y);
+            
+            // Check if we are inserting a child into THIS hierarchy
+            let mut root_insertion_row = None;
+            if let Mode::Input { action: InputAction::InsertChild { parent }, .. } = &self.mode {
+                if let Some(pos) = local.iter().position(|&(id, _)| id == *parent) {
+                    // Find the last visible child in the subtree of this parent
+                    let subtree_ids: HashSet<usize> = self.collect_subtree(*parent).into_iter().collect();
+                    let mut last_idx = pos;
+                    for (i, &(id, _)) in local.iter().enumerate().skip(pos + 1) {
+                        if subtree_ids.contains(&id) {
+                            last_idx = i;
+                        } else {
+                            break; // local is DFS/topological, so subtrees are contiguous
+                        }
+                    }
+                    root_insertion_row = Some(last_idx + 1);
+                }
+            }
+
             for (lr, &(id, depth)) in local.iter().enumerate() {
-                self.nodes[id].row       = offset + lr;
+                let mut node_y = ry + lr as i32;
+                
+                // Apply offset only to nodes in this specific tree that are below the insertion point
+                if let Some(rir) = root_insertion_row {
+                    if lr >= rir { node_y += 1; }
+                }
+                
+                self.nodes[id].row       = start_row + lr;
                 self.nodes[id].world_x   = rx;
-                self.nodes[id].world_y   = ry + lr as i32;
+                self.nodes[id].world_y   = node_y;
                 let label_cols = self.nodes[id].label.chars().count() as i32;
-                // prefix = depth*2 cols (each level adds 2)  |  "> " = 2 cols
                 self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols;
             }
             order.extend(local);
@@ -447,6 +546,7 @@ impl App {
             Some(p) => p, None => return,
         };
         if pos == 0 { return; }
+        self.push_undo();
         let prev = self.nodes[parent].children[pos - 1];
         self.nodes[parent].children.remove(pos);
         self.nodes[prev].children.push(self.selected);
@@ -458,6 +558,7 @@ impl App {
         let parent = match self.nodes[self.selected].parent { Some(p) => p, None => return };
         let grandparent = match self.nodes[parent].parent { Some(gp) => gp, None => return };
         let parent_pos = self.nodes[grandparent].children.iter().position(|&c| c == parent).unwrap();
+        self.push_undo();
         self.nodes[parent].children.retain(|&c| c != self.selected);
         self.nodes[grandparent].children.insert(parent_pos + 1, self.selected);
         self.nodes[self.selected].parent = Some(grandparent);
