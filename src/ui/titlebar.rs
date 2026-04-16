@@ -1,4 +1,4 @@
-use crate::app::{CanvasState, InputAction, Mode, ProjectListState};
+use crate::app::{CanvasState, InputAction, Mode, StartMenuState};
 use crate::ui::palette as pal;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,7 +10,7 @@ pub fn border_style(mode: &Mode) -> Style {
 
 fn mode_color(mode: &Mode) -> Color {
     match mode {
-        Mode::ProjectList { .. }                                       => pal::CANVAS,
+        Mode::StartMenu { .. }                                         => pal::CANVAS,
         Mode::Input { action: InputAction::InsertChild { .. }, .. }    => pal::INSERT,
         Mode::Input { .. }                                             => pal::EDIT,
         Mode::Reparent { .. }                                          => pal::REPARENT,
@@ -21,69 +21,69 @@ fn mode_color(mode: &Mode) -> Color {
 }
 
 /// Title line rendered inside the top border of the outer frame.
-pub fn build_title(mode: &Mode) -> Line<'static> {
+pub fn build_title(mode: &Mode) -> Line<'_> {
     match mode {
-        Mode::ProjectList { state: ProjectListState::Browse { .. } } => project_list_title(),
-        Mode::ProjectList { state: ProjectListState::NewPath { .. } } => modal_title(
+        Mode::StartMenu { state: StartMenuState::Main { .. } } => start_menu_title(),
+        Mode::StartMenu { state: StartMenuState::NewPath { .. } } => modal_title(
             "NEW PROJECT", pal::INSERT,
-            "enter directory path  Enter:confirm  Esc:cancel",
+            "enter directory path  Enter:confirm  Esc:cancel".to_string(),
         ),
-        Mode::ProjectList { state: ProjectListState::NewName { .. } } => modal_title(
+        Mode::StartMenu { state: StartMenuState::NewName { .. } } => modal_title(
             "NEW PROJECT", pal::INSERT,
-            "enter project name  Enter:confirm  Esc:cancel",
+            "enter project name  Enter:confirm  Esc:cancel".to_string(),
+        ),
+        Mode::StartMenu { state: StartMenuState::EditSetting { key, .. } } => modal_title(
+            "SETTINGS", pal::EDIT,
+            format!("edit {}  Enter:confirm  Esc:cancel", key.replace('_', " ")),
         ),
         Mode::Canvas { state: CanvasState::Browse } => canvas_title(),
 
         Mode::Input { action: InputAction::InsertChild { .. }, .. } => modal_title(
             "INSERT", pal::INSERT,
-            "Enter:add  Tab:indent  ⇧Tab:dedent  ←→:cursor  Esc:done",
+            "Enter:add  Tab:indent  ⇧Tab:dedent  ←→:cursor  Esc:done".to_string(),
         ),
         Mode::Input { .. } => modal_title(
             "EDIT", pal::EDIT,
-            "←→:cursor  Enter:confirm  Esc:cancel",
+            "←→:cursor  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::Reparent { .. } => modal_title(
             "REPARENT", pal::REPARENT,
-            "hjkl:navigate  v/↵:confirm  Esc:cancel",
+            "hjkl:navigate  v/↵:confirm  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::New { .. } } => modal_title(
             "NEW NODE", pal::INSERT,
-            "type name  Enter:confirm  Esc:cancel",
+            "type name  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Pick { .. } } => modal_title(
             "PICK", pal::PICK,
-            "hjkl:move  p:place  Esc:cancel",
+            "hjkl:move  p:place  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Link { .. } } => modal_title(
             "LINK", pal::LINK,
-            "hjkl:navigate  Enter:toggle link  Esc:cancel",
+            "hjkl:navigate  Enter:toggle link  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Menu } => modal_title(
             "ARROWS", pal::CANVAS,
-            "i:incoming  o:outgoing  g:global  F/Esc:close",
+            "i:incoming  o:outgoing  g:global  F/Esc:close".to_string(),
         ),
         Mode::Canvas { state: CanvasState::MenuIncoming } => modal_title(
             "ARROWS › INCOMING", pal::CANVAS,
-            "T:tree  S:selected  Esc:back",
+            "T:tree  S:selected  Esc:back".to_string(),
         ),
         Mode::Canvas { state: CanvasState::MenuOutgoing } => modal_title(
             "ARROWS › OUTGOING", pal::CANVAS,
-            "T:tree  S:selected  Esc:back",
+            "T:tree  S:selected  Esc:back".to_string(),
         ),
     }
 }
 
 // ── Builders ──────────────────────────────────────────────────────────────────
 
-fn project_list_title() -> Line<'static> {
+fn start_menu_title() -> Line<'static> {
     Line::from(vec![
         Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
         sep(),
-        bracket("Enter", pal::CANVAS), Span::styled(" open  ", pal::tinted(pal::CANVAS)),
-        bracket("n",     pal::INSERT), Span::styled(" new  ",  pal::tinted(pal::INSERT)),
-        bracket("d",     pal::EDIT),   Span::styled(" remove  ", pal::tinted(pal::EDIT)),
-        sep(),
-        Span::styled("[q] quit ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Welcome ", Style::default().fg(pal::CANVAS)),
     ])
 }
 
@@ -107,7 +107,7 @@ fn canvas_title() -> Line<'static> {
 }
 
 /// Modal mode: coloured mode name + muted hint string.
-fn modal_title(name: &'static str, color: Color, hints: &'static str) -> Line<'static> {
+fn modal_title(name: &'static str, color: Color, hints: String) -> Line<'static> {
     Line::from(vec![
         Span::raw(" "),
         Span::styled(name, pal::tinted_bold(color)),

@@ -1,4 +1,4 @@
-use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, ProjectListState};
+use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState};
 use crate::ui::palette as pal;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
@@ -8,15 +8,15 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Terminal,
 };
 use std::collections::HashSet;
 use std::io;
 
 pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
-    if matches!(&app.mode, Mode::ProjectList { .. }) {
-        return draw_project_list(terminal, app);
+    if matches!(&app.mode, Mode::StartMenu { .. }) {
+        return draw_start_menu(terminal, app);
     }
 
     let order   = app.recompute_layout();
@@ -35,6 +35,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(titlebar::border_style(&app.mode))
                 .title(titlebar::build_title(&app.mode)),
             area,
@@ -345,6 +346,7 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
         Paragraph::new(lines)
             .block(Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .title(" Arrow Display ")
                 .border_style(pal::tinted(pal::CANVAS))),
         Rect { x, y, width: w, height: h },
@@ -387,19 +389,19 @@ fn build_trail_for(order: &[(usize, usize)], is_last: &[bool], idx: usize, depth
 
 fn build_status(app: &App) -> String {
     match &app.mode {
-        Mode::ProjectList { state: ProjectListState::Browse { selected } } => {
-            if let Some(e) = app.registry.projects.get(*selected) {
-                format!(" {} │ {}  │  Enter:open  n:new  d:remove  q:quit ", e.name, e.path)
-            } else if let Some(msg) = &app.status_message {
-                format!(" {} ", msg)
+        Mode::StartMenu { state: StartMenuState::Main { selected } } => {
+            if let Some(n) = app.nodes.get(*selected) {
+                format!(" {} │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q:quit ", n.label)
             } else {
-                String::from(" no projects — press [n] to create one ")
+                " FILAMENT │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q:quit ".to_string()
             }
         }
-        Mode::ProjectList { state: ProjectListState::NewPath { buf, .. } } =>
+        Mode::StartMenu { state: StartMenuState::NewPath { buf, .. } } =>
             format!(" new project path: \"{}\" ", buf),
-        Mode::ProjectList { state: ProjectListState::NewName { path, buf, .. } } =>
+        Mode::StartMenu { state: StartMenuState::NewName { path, buf, .. } } =>
             format!(" new project \"{}\" at {} ", buf, path),
+        Mode::StartMenu { state: StartMenuState::EditSetting { key, buf, .. } } =>
+            format!(" editing {}: \"{}\" ", key.replace('_', " "), buf),
         Mode::Input { action: InputAction::InsertChild { parent }, buf, .. } =>
             format!(" inserting under \"{}\" │ \"{}\" ", app.nodes[*parent].label, buf),
         Mode::Input { action: InputAction::EditLabel { node } | InputAction::Overwrite { node }, buf, .. } =>
@@ -441,18 +443,31 @@ fn build_status(app: &App) -> String {
     }
 }
 
-// ── Project list screen ───────────────────────────────────────────────────────
+// ── Start menu screen ─────────────────────────────────────────────────────────
 
-fn draw_project_list(
+const BANNER: &[&str] = &[
+    "███████╗██╗██╗      █████╗ ███╗   ███╗███████╗███╗   ██╗████████╗",
+    "██╔════╝██║██║     ██╔══██╗████╗ ████║██╔════╝████╗  ██║╚══██╔══╝",
+    "█████╗  ██║██║     ███████║██╔████╔██║█████╗  ██╔██╗ ██║   ██║   ",
+    "██╔══╝  ██║██║     ██╔══██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║   ██║   ",
+    "██║     ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ",
+    "╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
+];
+
+fn draw_start_menu(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &App,
+    app: &mut App,
 ) -> io::Result<()> {
+    let order   = app.recompute_layout();
+    let is_last = compute_is_last(&order);
+
     terminal.draw(|frame| {
         let area = frame.area();
 
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(titlebar::border_style(&app.mode))
                 .title(titlebar::build_title(&app.mode)),
             area,
@@ -465,48 +480,118 @@ fn draw_project_list(
             height: area.height.saturating_sub(3),
         };
 
-        let selected_idx = match &app.mode {
-            Mode::ProjectList { state: ProjectListState::Browse { selected } } => Some(*selected),
-            _ => None,
-        };
+        // ── Render Banner (Centered) ──────────────────────────────────────────
+        let banner_w = BANNER[0].chars().count() as u16;
+        let banner_h = BANNER.len() as u16;
+        let banner_x = inner.x + (inner.width.saturating_sub(banner_w)) / 2;
+        let banner_y = inner.y + (inner.height.saturating_sub(banner_h + 12)) / 2;
+        let banner_right_x = banner_x + banner_w;
 
-        if app.registry.projects.is_empty() {
+        for (i, line) in BANNER.iter().enumerate() {
             frame.render_widget(
-                Paragraph::new("  No projects yet. Press [n] to create one.")
-                    .style(Style::default().fg(pal::DIM)),
-                Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 },
+                Paragraph::new(*line).style(Style::default().fg(pal::SELECTED)),
+                Rect { x: banner_x, y: banner_y + i as u16, width: banner_w, height: 1 },
             );
-        } else {
-            for (i, entry) in app.registry.projects.iter().enumerate() {
-                if i as u16 >= inner.height.saturating_sub(1) { break; }
-                let is_sel = selected_idx == Some(i);
-                let (indicator, name_style) = if is_sel {
-                    (">", pal::solid(pal::SELECTED))
-                } else {
-                    (" ", pal::tinted(pal::NODE))
-                };
-                frame.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled(format!(" {} ", indicator), name_style),
-                        Span::styled(entry.name.clone(), name_style),
-                        Span::styled(format!("  {}", entry.path), Style::default().fg(pal::DIM)),
-                    ])),
-                    Rect { x: inner.x, y: inner.y + i as u16, width: inner.width, height: 1 },
-                );
-            }
         }
 
-        // Inline input prompt for new-project path / name.
-        let prompt = match &app.mode {
-            Mode::ProjectList { state: ProjectListState::NewPath { buf, cursor } } =>
-                Some(("path: ", buf.as_str(), *cursor, pal::INSERT)),
-            Mode::ProjectList { state: ProjectListState::NewName { buf, cursor, .. } } =>
-                Some(("name: ", buf.as_str(), *cursor, pal::INSERT)),
-            _ => None,
-        };
-        if let Some((prefix, buf, cursor, color)) = prompt {
-            let sy = inner.height.saturating_sub(1);
-            render_input_line(frame, inner, 0, sy, prefix, buf, cursor, color);
+        // ── Render Nodes (Left-aligned with Banner) ──────────────────────────
+        let mut max_node_w = 40u16;
+        for (id, depth) in &order {
+            let w = app.nodes[*id].label.chars().count() as u16 + (*depth as u16 * 2) + 6;
+            max_node_w = max_node_w.max(w);
+        }
+        let menu_w = max_node_w.min(inner.width.saturating_sub(4));
+        let menu_x = banner_x;
+        let menu_y = banner_y + banner_h + 2;
+
+        let mut trail: Vec<bool> = Vec::new();
+        for (idx, &(id, depth)) in order.iter().enumerate() {
+            let node = &app.nodes[id];
+
+            trail.truncate(depth);
+            if depth > 0 {
+                if trail.len() < depth { trail.push(is_last[idx]); }
+                else { *trail.last_mut().unwrap() = is_last[idx]; }
+            }
+
+            let prefix = box_prefix(&trail[..depth.min(trail.len())]);
+            let collapse_suffix = if node.children.is_empty() { String::new() }
+                else if node.collapsed { format!("  [+{}]", node.children.len()) }
+                else { String::new() };
+
+            let (indicator, style) = if app.selected == id {
+                (">", pal::solid(pal::SELECTED))
+            } else {
+                (" ", pal::tinted(pal::NODE))
+            };
+
+            let label_lower = node.label.to_lowercase();
+            let shortcut = if node.parent.is_none() {
+                if label_lower.contains("open")     { Some("o") }
+                else if label_lower.contains("find") { Some("f") }
+                else if label_lower.contains("settings") { Some("s") }
+                else if label_lower.contains("+ new")  { Some("n") }
+                else { None }
+            } else { None };
+
+            // Check if this node is currently being edited in-line
+            let mut prompt_info = None;
+            if app.selected == id {
+                prompt_info = match &app.mode {
+                    Mode::StartMenu { state: StartMenuState::NewPath { buf, cursor } } =>
+                        Some(("path: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
+                    Mode::StartMenu { state: StartMenuState::NewName { buf, cursor, .. } } =>
+                        Some(("name: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
+                    Mode::StartMenu { state: StartMenuState::EditSetting { key, buf, cursor } } => {
+                        let prefix = if key.starts_with("rename_project:") {
+                            "rename: ".to_string()
+                        } else {
+                            format!("{}: ", key.replace('_', " "))
+                        };
+                        Some((prefix, buf.as_str(), *cursor, pal::EDIT))
+                    }
+                    _ => None,
+                };
+            }
+
+            if let Some((input_prefix, buf, cursor, color)) = prompt_info {
+                let full_prefix = format!("{}{}{} ", prefix, indicator, input_prefix);
+                render_input_line(
+                    frame,
+                    Rect { x: menu_x, y: menu_y + idx as u16, width: menu_w, height: 1 },
+                    0, 0,
+                    &full_prefix, buf, cursor, color
+                );
+            } else {
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(prefix,             Style::default().fg(pal::PREFIX)),
+                        Span::styled(format!("{} ", indicator), Style::default().fg(pal::DIM)),
+                        Span::styled(node.label.clone(), style),
+                        Span::styled(collapse_suffix,    Style::default().fg(pal::DIM)),
+                    ])),
+                    Rect {
+                        x: menu_x,
+                        y: menu_y + idx as u16,
+                        width: menu_w,
+                        height: 1
+                    },
+                );
+            }
+
+            if let Some(key) = shortcut {
+                let shortcut_text = format!("[{}]", key);
+                let shortcut_w = shortcut_text.chars().count() as u16;
+                frame.render_widget(
+                    Paragraph::new(Span::styled(shortcut_text, Style::default().fg(pal::INSERT))),
+                    Rect {
+                        x: banner_right_x.saturating_sub(shortcut_w),
+                        y: menu_y + idx as u16,
+                        width: shortcut_w,
+                        height: 1,
+                    },
+                );
+            }
         }
 
         // Status bar.

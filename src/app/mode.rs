@@ -1,6 +1,6 @@
 pub enum Mode {
-    /// Project browser shown on startup and when no project is open.
-    ProjectList { state: ProjectListState },
+    /// Initial menu screen with an ASCII banner and hierarchical options.
+    StartMenu { state: StartMenuState },
     /// Ground state. hjkl moves the world cursor; everything else is a
     /// sub-mode entered from here.
     Canvas   { state: CanvasState },
@@ -40,15 +40,17 @@ impl Default for ArrowSettings {
     }
 }
 
-// ── Project list sub-states ───────────────────────────────────────────────────
+// ── Start menu sub-states ─────────────────────────────────────────────────────
 
-pub enum ProjectListState {
-    /// Browsing the registry; `selected` is the highlighted index.
-    Browse { selected: usize },
+pub enum StartMenuState {
+    /// Top-level menu: Open Filaments, Search, Settings.
+    Main { selected: usize },
     /// User is typing a filesystem path for the new project directory.
     NewPath { buf: String, cursor: usize },
     /// Path confirmed; user is typing the project name (pre-filled from dir name).
     NewName { path: String, buf: String, cursor: usize },
+    /// User is editing a specific global setting.
+    EditSetting { key: String, buf: String, cursor: usize },
 }
 
 // ── Canvas sub-states ─────────────────────────────────────────────────────────

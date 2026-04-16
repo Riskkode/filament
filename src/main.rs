@@ -13,7 +13,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
-use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, ProjectListState};
+use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState};
 use ui::draw::draw;
 
 fn main() -> io::Result<()> {
@@ -32,28 +32,36 @@ fn main() -> io::Result<()> {
             let canvas_h = th.saturating_sub(3) as usize;
 
             match app.mode {
-                // ── Project list ──────────────────────────────────────────────
-                Mode::ProjectList { .. } => {
-                    if matches!(&app.mode, Mode::ProjectList { state: ProjectListState::Browse { .. } }) {
+                // ── Start menu ────────────────────────────────────────────────
+                Mode::StartMenu { .. } => {
+                    let is_browse = matches!(&app.mode,
+                        Mode::StartMenu { state: StartMenuState::Main { .. } }
+                    );
+
+                    if is_browse {
                         match (key.modifiers, key.code) {
                             (_, KeyCode::Char('q'))                                        => break,
-                            (_, KeyCode::Enter)                                            => app.project_list_open_selected(),
-                            (KeyModifiers::NONE, KeyCode::Char('n'))                       => app.project_list_start_new(),
-                            (KeyModifiers::NONE, KeyCode::Char('d'))                       => app.project_list_remove_selected(),
-                            (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.project_list_nav(1),
-                            (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.project_list_nav(-1),
-                            (_, KeyCode::Esc)                                              => app.project_list_cancel(),
+                            (_, KeyCode::Enter) | (KeyModifiers::NONE, KeyCode::Char('l')) => app.start_menu_confirm(),
+                            (KeyModifiers::NONE, KeyCode::Char('e')) | (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.start_menu_edit(),
+                            (KeyModifiers::NONE, KeyCode::Char('n'))                       => app.start_menu_go_to_label("new"),
+                            (KeyModifiers::NONE, KeyCode::Char('o'))                       => app.start_menu_go_to_label("open"),
+                            (KeyModifiers::NONE, KeyCode::Char('f'))                       => app.start_menu_go_to_label("find"),
+                            (KeyModifiers::NONE, KeyCode::Char('s'))                       => app.start_menu_go_to_label("settings"),
+                            (KeyModifiers::NONE, KeyCode::Char('d'))                       => app.start_menu_remove_selected(),
+                            (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.start_menu_nav(1),
+                            (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.start_menu_nav(-1),
+                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Esc)   => app.start_menu_cancel(),
                             _ => {}
                         }
                     } else {
                         // NewPath / NewName input.
                         match key.code {
-                            KeyCode::Enter     => app.project_list_confirm(),
-                            KeyCode::Esc       => app.project_list_cancel(),
-                            KeyCode::Backspace => app.project_list_backspace(),
-                            KeyCode::Left      => app.project_list_move_cursor(-1),
-                            KeyCode::Right     => app.project_list_move_cursor(1),
-                            KeyCode::Char(c)   => app.project_list_input_char(c),
+                            KeyCode::Enter     => app.start_menu_confirm(),
+                            KeyCode::Esc       => app.start_menu_cancel(),
+                            KeyCode::Backspace => app.start_menu_backspace(),
+                            KeyCode::Left      => app.start_menu_move_cursor(-1),
+                            KeyCode::Right     => app.start_menu_move_cursor(1),
+                            KeyCode::Char(c)   => app.start_menu_input_char(c),
                             _ => {}
                         }
                     }
@@ -166,10 +174,24 @@ fn main() -> io::Result<()> {
 
                             // ── Link confirmation / cancellation ──────────────
                             (_, KeyCode::Enter) => { app.canvas_confirm_link(); app.save_project(); }
-                            (_, KeyCode::Esc)   => app.canvas_cancel_sub(),
+                            (_, KeyCode::Esc)   => {
+                                if matches!(app.mode, Mode::Canvas { state: CanvasState::Browse }) {
+                                    app.quit_to_main_menu();
+                                } else {
+                                    app.canvas_cancel_sub();
+                                }
+                            }
 
                             // ── Cursor movement ───────────────────────────────
-                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
+                            (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => {
+                                if matches!(app.mode, Mode::Canvas { state: CanvasState::Browse })
+                                    && app.node_near_cursor(app.cursor_x, app.cursor_y).is_none()
+                                {
+                                    app.quit_to_main_menu();
+                                } else {
+                                    app.cursor_move(-1, 0, canvas_w, canvas_h as u16);
+                                }
+                            }
                             (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),

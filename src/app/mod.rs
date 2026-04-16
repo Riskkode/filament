@@ -2,14 +2,15 @@ mod mode;
 mod canvas;
 mod delete;
 mod input;
-mod project_list;
+mod start_menu;
 mod reparent;
 
-pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, ProjectListState};
+pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState};
 
 use crate::models::node::Node;
 use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
+use crate::persistence::settings::GlobalSettings;
 use std::path::PathBuf;
 
 pub struct App {
@@ -34,13 +35,15 @@ pub struct App {
     pub project_created_at: u64,
     /// Global project registry loaded from `~/.config/filament/registry.toml`.
     pub registry: Registry,
+    /// Global application settings.
+    pub settings: GlobalSettings,
     /// Transient message shown in the status bar (errors, hints).
     pub status_message: Option<String>,
 }
 
 impl App {
     pub fn new() -> Self {
-        Self {
+        let mut app = Self {
             arrow:    ArrowSettings::default(),
             nodes:    vec![],
             selected: 0,
@@ -48,13 +51,16 @@ impl App {
             camera_y: 0,
             cursor_x: 0,
             cursor_y: 0,
-            mode:     Mode::ProjectList { state: ProjectListState::Browse { selected: 0 } },
+            mode:     Mode::StartMenu { state: StartMenuState::Main { selected: 0 } },
             project_path:       None,
             project_name:       String::new(),
             project_created_at: 0,
             registry:           Registry::load(),
+            settings:           GlobalSettings::load(),
             status_message:     None,
-        }
+        };
+        app.init_main_menu_nodes();
+        app
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -166,6 +172,120 @@ impl App {
         });
         let _ = self.registry.save();
         self.load_project(base);
+    }
+
+    pub fn init_main_menu_nodes(&mut self) {
+        self.nodes.clear();
+        
+        // 1. Root: Open
+        self.nodes.push(Node {
+            label: "📁 Open".to_string(),
+            parent: None,
+            children: vec![],
+            links: vec![],
+            collapsed: false, // Start expanded
+            row: 0,
+            world_x: 0,
+            world_y: 0,
+            world_x_end: 0,
+        });
+
+        // Add projects as children of "Open"
+        let open_idx = 0;
+        for (i, entry) in self.registry.projects.iter().enumerate() {
+            let child_idx = self.nodes.len();
+            self.nodes.push(Node {
+                label: format!("{}  ({})", entry.name, entry.path),
+                parent: Some(open_idx),
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: i + 1,
+                world_x: 0,
+                world_y: (i + 1) as i32,
+                world_x_end: 0,
+            });
+            self.nodes[open_idx].children.push(child_idx);
+        }
+
+        // 2. Root: New
+        self.nodes.push(Node {
+            label: "+ New".to_string(),
+            parent: None,
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: self.nodes.len(),
+            world_x: 0,
+            world_y: self.nodes.len() as i32,
+            world_x_end: 0,
+        });
+
+        // 3. Root: Find
+        self.nodes.push(Node {
+            label: "🔍 Find".to_string(),
+            parent: None,
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: self.nodes.len(),
+            world_x: 0,
+            world_y: self.nodes.len() as i32,
+            world_x_end: 0,
+        });
+
+        // 4. Root: Settings
+        let settings_idx = self.nodes.len();
+        self.nodes.push(Node {
+            label: "⚙ Settings".to_string(),
+            parent: None,
+            children: vec![],
+            links: vec![],
+            collapsed: true, // Start collapsed
+            row: settings_idx,
+            world_x: 0,
+            world_y: settings_idx as i32,
+            world_x_end: 0,
+        });
+        
+        // Add specific settings as children of "Settings"
+        let path_idx = self.nodes.len();
+        self.nodes.push(Node {
+            label: format!("Default filaments path: {}", self.settings.default_projects_path),
+            parent: Some(settings_idx),
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: path_idx,
+            world_x: 0,
+            world_y: path_idx as i32,
+            world_x_end: 0,
+        });
+        self.nodes[settings_idx].children.push(path_idx);
+
+        let user_idx = self.nodes.len();
+        self.nodes.push(Node {
+            label: format!("Username: {}", self.settings.username),
+            parent: Some(settings_idx),
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: user_idx,
+            world_x: 0,
+            world_y: user_idx as i32,
+            world_x_end: 0,
+        });
+        self.nodes[settings_idx].children.push(user_idx);
+
+        self.selected = 0;
+    }
+
+    pub fn quit_to_main_menu(&mut self) {
+        self.save_project();
+        self.project_path = None;
+        self.project_name = String::new();
+        self.init_main_menu_nodes();
+        self.mode = Mode::StartMenu { state: StartMenuState::Main { selected: 0 } };
     }
 
     pub fn has_selection(&self) -> bool {
