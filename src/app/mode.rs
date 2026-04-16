@@ -54,6 +54,8 @@ pub enum StartMenuState {
     NewName { path: String, buf: String, cursor: usize },
     /// User is editing a specific global setting.
     EditSetting { key: String, buf: String, cursor: usize },
+    /// User is importing an existing project (fuzzy search).
+    Import { root: String, buf: String, cursor: usize, matches: Vec<String>, match_idx: usize, editing_root: bool },
 }
 
 // ── Canvas sub-states ─────────────────────────────────────────────────────────

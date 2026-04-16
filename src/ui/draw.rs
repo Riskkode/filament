@@ -426,17 +426,27 @@ fn build_status(app: &App) -> String {
     match &app.mode {
         Mode::StartMenu { state: StartMenuState::Main { selected } } => {
             if let Some(n) = app.nodes.get(*selected) {
-                format!(" {} │ Enter:select  e:edit  o/f/s/n/?:jump  j/k:nav  q/Q:quit ", n.label)
+                let mut base = format!(" {} │ Enter:select  e:edit  o/f/s/n/?:jump  j/k:nav  q/Q:quit ", n.label);
+                if let Some(parent) = n.parent {
+                    if app.nodes[parent].label.to_lowercase().contains("open") {
+                        base = format!(" {} │ Enter:select  e:name  p:path  d:remove  o/f/s/n/?:jump  j/k:nav  q/Q:quit ", n.label);
+                    }
+                }
+                base
             } else {
                 " FILAMENT │ Enter:select  e:edit  o/f/s/n/?:jump  j/k:nav  q/Q:quit ".to_string()
             }
         }
         Mode::StartMenu { state: StartMenuState::NewPath { buf, .. } } =>
-            format!(" new project path: \"{}\" ", buf),
+            format!(" new project location: \"{}\" ", buf),
         Mode::StartMenu { state: StartMenuState::NewName { path, buf, .. } } =>
             format!(" new project \"{}\" at {} ", buf, path),
         Mode::StartMenu { state: StartMenuState::EditSetting { key, buf, .. } } =>
             format!(" editing {}: \"{}\" ", key.replace('_', " "), buf),
+        Mode::StartMenu { state: StartMenuState::Import { buf, matches, root, editing_root, .. } } => {
+            let mode = if *editing_root { "editing location" } else { "fuzzy search" };
+            format!(" import from {} │ {}: \"{}\" │ {} matches │ up/down:nav  Tab:toggle mode ", root, mode, buf, matches.len())
+        }
         Mode::Input { action: InputAction::InsertChild { parent }, buf, .. } =>
             format!(" inserting under \"{}\" │ \"{}\" ", app.nodes[*parent].label, buf),
         Mode::Input { action: InputAction::EditLabel { node } | InputAction::Overwrite { node }, buf, .. } =>
@@ -568,6 +578,7 @@ fn draw_start_menu(
             let shortcut = if node.parent.is_none() {
                 if label_lower.contains("open")     { Some("o") }
                 else if label_lower.contains("find") { Some("f") }
+                else if label_lower.contains("import") { Some("i") }
                 else if label_lower.contains("settings") { Some("s") }
                 else if label_lower.contains("+ new")  { Some("n") }
                 else if label_lower.contains("help")   { Some("?") }
@@ -579,16 +590,22 @@ fn draw_start_menu(
             if app.selected == id {
                 prompt_info = match &app.mode {
                     Mode::StartMenu { state: StartMenuState::NewPath { buf, cursor } } =>
-                        Some(("path: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
+                        Some(("location: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
                     Mode::StartMenu { state: StartMenuState::NewName { buf, cursor, .. } } =>
-                        Some(("name: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
+                        Some(("project: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
                     Mode::StartMenu { state: StartMenuState::EditSetting { key, buf, cursor } } => {
                         let prefix = if key.starts_with("rename_project:") {
                             "rename: ".to_string()
+                        } else if key.starts_with("repath_project:") {
+                            "repath: ".to_string()
                         } else {
                             format!("{}: ", key.replace('_', " "))
                         };
                         Some((prefix, buf.as_str(), *cursor, pal::EDIT))
+                    }
+                    Mode::StartMenu { state: StartMenuState::Import { buf, cursor, editing_root, .. } } => {
+                        let prefix = if *editing_root { "location: ".to_string() } else { "search: ".to_string() };
+                        Some((prefix, buf.as_str(), *cursor, pal::INSERT))
                     }
                     _ => None,
                 };
@@ -630,6 +647,18 @@ fn draw_start_menu(
                         width: shortcut_w,
                         height: 1,
                     },
+                );
+            }
+        }
+
+        // ── Render Import Results ────────────────────────────────────────────
+        if let Mode::StartMenu { state: StartMenuState::Import { matches, match_idx, .. } } = &app.mode {
+            let result_y = menu_y + order.len() as u16 + 1;
+            for (i, path) in matches.iter().enumerate() {
+                let style = if i == *match_idx { pal::solid(pal::SELECTED) } else { Style::default().fg(pal::DIM) };
+                frame.render_widget(
+                    Paragraph::new(format!("  {} {}", if i == *match_idx { ">" } else { " " }, path)).style(style),
+                    Rect { x: menu_x, y: result_y + i as u16, width: inner.width.saturating_sub(menu_x - inner.x), height: 1 }
                 );
             }
         }

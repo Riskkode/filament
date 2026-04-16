@@ -43,6 +43,8 @@ fn main() -> io::Result<()> {
                             (_, KeyCode::Char('q')) | (KeyModifiers::SHIFT, KeyCode::Char('Q')) => break,
                             (_, KeyCode::Enter) | (KeyModifiers::NONE, KeyCode::Char('l')) => app.start_menu_confirm(),
                             (KeyModifiers::NONE, KeyCode::Char('e')) | (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.start_menu_edit(),
+                            (KeyModifiers::NONE, KeyCode::Char('p'))                       => app.start_menu_edit_path(),
+                            (KeyModifiers::NONE, KeyCode::Char('i'))                       => app.start_menu_go_to_label("import"),
                             (KeyModifiers::NONE, KeyCode::Char('n'))                       => app.start_menu_go_to_label("new"),
                             (KeyModifiers::NONE, KeyCode::Char('o'))                       => app.start_menu_go_to_label("open"),
                             (KeyModifiers::NONE, KeyCode::Char('f'))                       => app.start_menu_go_to_label("find"),
@@ -55,13 +57,16 @@ fn main() -> io::Result<()> {
                             _ => {}
                         }
                     } else {
-                        // NewPath / NewName input.
+                        // NewPath / NewName / Import input.
                         match key.code {
                             KeyCode::Enter     => app.start_menu_confirm(),
                             KeyCode::Esc       => app.start_menu_cancel(),
                             KeyCode::Backspace => app.start_menu_backspace(),
                             KeyCode::Left      => app.start_menu_move_cursor(-1),
                             KeyCode::Right     => app.start_menu_move_cursor(1),
+                            KeyCode::Up        => app.start_menu_import_prev(),
+                            KeyCode::Down      => app.start_menu_import_next(),
+                            KeyCode::Tab       => app.start_menu_import_toggle_root(),
                             KeyCode::Char(c)   => app.start_menu_input_char(c),
                             _ => {}
                         }

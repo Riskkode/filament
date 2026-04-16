@@ -209,8 +209,10 @@ impl App {
         use crate::db::connection;
         use crate::persistence::registry::ProjectEntry;
 
+        let project_root = base.join(name);
+
         // Create the .filament/ directory and an empty canvas.db.
-        let db_path = crate::persistence::project::db_path(base);
+        let db_path = crate::persistence::project::db_path(&project_root);
         match connection::open(&db_path) {
             Ok(_) => {}
             Err(e) => { self.status_message = Some(format!("init error: {e}")); return; }
@@ -218,7 +220,7 @@ impl App {
 
         // Write initial project.toml.
         let settings = ProjectSettings::new(name);
-        if let Err(e) = settings.save(base) {
+        if let Err(e) = settings.save(&project_root) {
             self.status_message = Some(format!("init error: {e}"));
             return;
         }
@@ -226,10 +228,10 @@ impl App {
         // Register and open.
         self.registry.add_project(ProjectEntry {
             name: name.to_string(),
-            path: base.to_string_lossy().into_owned(),
+            path: project_root.to_string_lossy().into_owned(),
         });
         let _ = self.registry.save();
-        self.load_project(base);
+        self.load_project(&project_root);
     }
 
     pub fn init_main_menu_nodes(&mut self) {
@@ -279,7 +281,20 @@ impl App {
             world_x_end: 0,
         });
 
-        // 3. Root: Find
+        // 3. Root: Import
+        self.nodes.push(Node {
+            label: "📥 Import".to_string(),
+            parent: None,
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: self.nodes.len(),
+            world_x: 0,
+            world_y: self.nodes.len() as i32,
+            world_x_end: 0,
+        });
+
+        // 4. Root: Find
         self.nodes.push(Node {
             label: "🔍 Find".to_string(),
             parent: None,
@@ -347,8 +362,6 @@ impl App {
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
         });
-
-        self.selected = 0;
     }
 
     pub fn quit_to_main_menu(&mut self) {
@@ -356,6 +369,7 @@ impl App {
         self.project_path = None;
         self.project_name = String::new();
         self.init_main_menu_nodes();
+        self.selected = 0;
         self.mode = Mode::StartMenu { state: StartMenuState::Main { selected: 0 } };
     }
 

@@ -37,6 +37,10 @@ pub fn build_title(mode: &Mode) -> Line<'_> {
             "SETTINGS", pal::EDIT,
             format!("edit {}  Enter:confirm  Esc:cancel", key.replace('_', " ")),
         ),
+        Mode::StartMenu { state: StartMenuState::Import { .. } } => modal_title(
+            "IMPORT", pal::INSERT,
+            "type to fuzzy search  ↑↓:nav  Tab:change location  Enter:import  Esc:cancel".to_string(),
+        ),
         Mode::Canvas { state: CanvasState::Browse } => canvas_title(),
 
         Mode::Input { action: InputAction::InsertChild { .. }, .. } => modal_title(
