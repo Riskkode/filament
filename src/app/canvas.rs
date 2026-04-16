@@ -125,8 +125,101 @@ impl App {
 
     // ── Cancellation ─────────────────────────────────────────────────────────
 
-    /// Return to Browse from a New or Pick sub-state.
+    /// Return to Browse from a New, Pick, or Goto sub-state.
     pub fn canvas_cancel_sub(&mut self) {
         self.mode = Mode::Canvas { state: CanvasState::Browse };
     }
+
+    // ── Goto ──────────────────────────────────────────────────────────────────
+
+    pub fn canvas_start_goto(&mut self) {
+        self.mode = Mode::Canvas { state: CanvasState::Goto {
+            buf: String::new(),
+            cursor: 0,
+            matches: vec![],
+            match_idx: 0,
+        }};
+    }
+
+    pub fn canvas_goto_input_char(&mut self, c: char) {
+        if let Mode::Canvas { state: CanvasState::Goto { ref mut buf, ref mut cursor, .. } } = self.mode {
+            buf.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+        self.update_goto_matches();
+    }
+
+    pub fn canvas_goto_backspace(&mut self) {
+        if let Mode::Canvas { state: CanvasState::Goto { ref mut buf, ref mut cursor, .. } } = self.mode {
+            if *cursor > 0 {
+                let ch = buf[..*cursor].chars().last().unwrap();
+                *cursor -= ch.len_utf8();
+                buf.remove(*cursor);
+            }
+        }
+        self.update_goto_matches();
+    }
+
+    pub fn canvas_goto_move_cursor(&mut self, delta: i32) {
+        if let Mode::Canvas { state: CanvasState::Goto { ref buf, ref mut cursor, .. } } = self.mode {
+            if delta < 0 {
+                if *cursor > 0 {
+                    let ch = buf[..*cursor].chars().last().unwrap();
+                    *cursor -= ch.len_utf8();
+                }
+            } else if *cursor < buf.len() {
+                let ch = buf[*cursor..].chars().next().unwrap();
+                *cursor += ch.len_utf8();
+            }
+        }
+    }
+
+    fn update_goto_matches(&mut self) {
+        if let Mode::Canvas { state: CanvasState::Goto { ref buf, ref mut matches, ref mut match_idx, .. } } = self.mode {
+            matches.clear();
+            *match_idx = 0;
+            if buf.is_empty() { return; }
+
+            let search = buf.to_lowercase();
+            for (i, node) in self.nodes.iter().enumerate() {
+                if fuzzy_match(&node.label.to_lowercase(), &search) {
+                    matches.push(i);
+                }
+            }
+            
+            // If we have matches, auto-select the first one
+            if !matches.is_empty() {
+                self.selected = matches[0];
+            }
+        }
+    }
+
+    pub fn canvas_goto_next(&mut self) {
+        if let Mode::Canvas { state: CanvasState::Goto { ref matches, ref mut match_idx, .. } } = self.mode {
+            if matches.is_empty() { return; }
+            *match_idx = (*match_idx + 1) % matches.len();
+            self.selected = matches[*match_idx];
+        }
+    }
+
+    pub fn canvas_goto_confirm(&mut self, canvas_w: u16, canvas_h: u16) {
+        if let Mode::Canvas { state: CanvasState::Goto { ref matches, match_idx, .. } } = self.mode {
+            if !matches.is_empty() {
+                self.selected = matches[match_idx];
+                self.center_on_selected(canvas_w, canvas_h);
+            }
+        }
+        self.canvas_cancel_sub();
+    }
+}
+
+fn fuzzy_match(text: &str, pattern: &str) -> bool {
+    let mut it = text.chars();
+    for p in pattern.chars() {
+        match it.find(|&t| t == p) {
+            Some(_) => {}
+            None => return false,
+        }
+    }
+    true
 }

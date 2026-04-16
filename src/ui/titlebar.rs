@@ -62,6 +62,10 @@ pub fn build_title(mode: &Mode) -> Line<'_> {
             "LINK", pal::LINK,
             "hjkl:navigate  Enter:toggle link  Esc:cancel".to_string(),
         ),
+        Mode::Canvas { state: CanvasState::Goto { .. } } => modal_title(
+            "GOTO", pal::EDIT,
+            "type to search  Tab:next match  Enter:jump  Esc:cancel".to_string(),
+        ),
         Mode::Canvas { state: CanvasState::Menu } => modal_title(
             "ARROWS", pal::CANVAS,
             "i:incoming  o:outgoing  g:global  F/Esc:close".to_string(),
@@ -101,7 +105,7 @@ fn canvas_title() -> Line<'static> {
         bracket("f",   pal::LINK),     Span::styled(" link",      pal::tinted(pal::LINK)),
         sep(),
         // ── Immediate commands ────────────────────────────────────────────────
-        Span::styled("[x] delete  [d/D] depth  [z] collapse  [c] center  [HJKL] warp  [q] quit ",
+        Span::styled("[x] delete  [d/D] depth  [z] collapse  [c] center  [HJKL] warp  [q] menu  [Q] quit ",
             Style::default().fg(Color::DarkGray)),
     ])
 }

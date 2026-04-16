@@ -40,7 +40,7 @@ fn main() -> io::Result<()> {
 
                     if is_browse {
                         match (key.modifiers, key.code) {
-                            (_, KeyCode::Char('q'))                                        => break,
+                            (_, KeyCode::Char('q')) | (KeyModifiers::SHIFT, KeyCode::Char('Q')) => break,
                             (_, KeyCode::Enter) | (KeyModifiers::NONE, KeyCode::Char('l')) => app.start_menu_confirm(),
                             (KeyModifiers::NONE, KeyCode::Char('e')) | (KeyModifiers::SHIFT, KeyCode::Char('E')) => app.start_menu_edit(),
                             (KeyModifiers::NONE, KeyCode::Char('n'))                       => app.start_menu_go_to_label("new"),
@@ -101,9 +101,22 @@ fn main() -> io::Result<()> {
                 }
 
                 // ── Canvas ───────────────────────────────────────────────────
-                Mode::Canvas { .. } => {
+                Mode::Canvas { state: ref cs } => {
+                    // Goto sub-state: search and jump to node.
+                    if let CanvasState::Goto { .. } = cs {
+                        match key.code {
+                            KeyCode::Enter     => app.canvas_goto_confirm(canvas_w, canvas_h as u16),
+                            KeyCode::Esc       => app.canvas_cancel_sub(),
+                            KeyCode::Tab       => app.canvas_goto_next(),
+                            KeyCode::Backspace => app.canvas_goto_backspace(),
+                            KeyCode::Left      => app.canvas_goto_move_cursor(-1),
+                            KeyCode::Right     => app.canvas_goto_move_cursor(1),
+                            KeyCode::Char(c)   => app.canvas_goto_input_char(c),
+                            _ => {}
+                        }
+                    }
                     // New sub-state: all keystrokes go to the text buffer.
-                    if matches!(&app.mode, Mode::Canvas { state: CanvasState::New { .. } }) {
+                    else if let CanvasState::New { .. } = cs {
                         match key.code {
                             KeyCode::Enter     => {
                                 app.canvas_confirm_new();
@@ -167,7 +180,10 @@ fn main() -> io::Result<()> {
                     } else {
                         // Browse + Pick + Link: cursor movement and all top-level actions.
                         match (key.modifiers, key.code) {
-                            (_, KeyCode::Char('q')) => {
+                            (KeyModifiers::NONE, KeyCode::Char('q')) => {
+                                app.quit_to_main_menu();
+                            }
+                            (KeyModifiers::SHIFT, KeyCode::Char('Q')) => {
                                 app.save_project();
                                 break;
                             }
@@ -212,6 +228,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('x'))  => { app.delete_selected(); app.save_project(); }
                             (KeyModifiers::NONE, KeyCode::Char('p'))  => { app.canvas_pick_or_place(); app.save_project(); }
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
+                            (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
                             (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
                                 app.mode = Mode::Canvas { state: CanvasState::Menu };
                             }

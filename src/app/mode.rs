@@ -61,6 +61,8 @@ pub enum CanvasState {
     Pick { origin_id: usize, origin_x: i32, origin_y: i32 },
     /// Linking: navigate cursor to a target; Enter toggles the link, Esc cancels.
     Link { origin_id: usize },
+    /// Quick jump to node by name.
+    Goto { buf: String, cursor: usize, matches: Vec<usize>, match_idx: usize },
     /// Arrow-display settings menu open — waiting for i / o / g / F / Esc.
     Menu,
     /// Menu sub-state: waiting for T or S to set incoming fidelity.

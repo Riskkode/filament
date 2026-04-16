@@ -275,6 +275,17 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             }
         }
 
+        // ── Goto modal prompt ────────────────────────────────────────────────
+        if let Mode::Canvas { state: CanvasState::Goto { ref buf, cursor, ref matches, match_idx } } = app.mode {
+            let matches_info = if matches.is_empty() {
+                if buf.is_empty() { String::new() } else { "(no matches)".to_string() }
+            } else {
+                format!("({}/{})", match_idx + 1, matches.len())
+            };
+            let prefix = format!("jump to: {} ", matches_info);
+            render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), &prefix, buf, cursor, pal::EDIT);
+        }
+
         // ── Arrow settings menu overlay ───────────────────────────────────────
         draw_arrow_menu(frame, canvas, app);
 
@@ -391,9 +402,9 @@ fn build_status(app: &App) -> String {
     match &app.mode {
         Mode::StartMenu { state: StartMenuState::Main { selected } } => {
             if let Some(n) = app.nodes.get(*selected) {
-                format!(" {} │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q:quit ", n.label)
+                format!(" {} │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q/Q:quit ", n.label)
             } else {
-                " FILAMENT │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q:quit ".to_string()
+                " FILAMENT │ Enter:select  e:edit  o/f/s/n:jump  j/k:nav  q/Q:quit ".to_string()
             }
         }
         Mode::StartMenu { state: StartMenuState::NewPath { buf, .. } } =>
@@ -440,6 +451,8 @@ fn build_status(app: &App) -> String {
             format!(" linking from \"{}\"  →  {}  │  {} outgoing links ",
                 app.nodes[*origin_id].label, target, existing)
         }
+        Mode::Canvas { state: CanvasState::Goto { buf, .. } } =>
+            format!(" finding node: \"{}\" ", buf),
     }
 }
 
