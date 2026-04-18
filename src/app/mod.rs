@@ -427,7 +427,11 @@ impl App {
                 self.nodes[id].world_x   = rx;
                 self.nodes[id].world_y   = node_y;
                 let label_cols = self.nodes[id].label.chars().count() as i32;
-                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols;
+                let mut suffix_cols = 0;
+                if !self.nodes[id].children.is_empty() && self.nodes[id].collapsed {
+                    suffix_cols = 5 + self.nodes[id].children.len().to_string().len() as i32;
+                }
+                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + suffix_cols;
             }
             order.extend(local);
         }
@@ -595,9 +599,97 @@ impl App {
     pub fn node_near_cursor(&self, cx: i32, cy: i32) -> Option<usize> {
         self.nodes.iter().enumerate()
             .filter(|(_, n)| n.row != usize::MAX)
-            .map(|(id, n)| (id, (n.world_x - cx).abs() + (n.world_y - cy).abs()))
+            .map(|(id, n)| {
+                let dx = if cx < n.world_x {
+                    n.world_x - cx
+                } else if cx > n.world_x_end {
+                    cx - n.world_x_end
+                } else {
+                    0
+                };
+                let dy = (n.world_y - cy).abs();
+                (id, dx + dy)
+            })
             .filter(|&(_, d)| d <= 4)
             .min_by_key(|&(_, d)| d)
             .map(|(id, _)| id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::node::Node;
+
+    #[test]
+    fn test_node_near_cursor_range() {
+        let mut app = App::new();
+        app.nodes = vec![
+            Node {
+                label: "Long label".to_string(),
+                parent: None,
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: 0,
+                world_x: 10,
+                world_y: 5,
+                world_x_end: 30,
+            }
+        ];
+
+        // Middle of the range
+        assert_eq!(app.node_near_cursor(20, 5), Some(0));
+        // Right edge
+        assert_eq!(app.node_near_cursor(30, 5), Some(0));
+        // Just outside right edge (within fuzzy distance 4)
+        assert_eq!(app.node_near_cursor(34, 5), Some(0));
+        // Outside right edge (beyond fuzzy distance 4)
+        assert_eq!(app.node_near_cursor(35, 5), None);
+        // Vertical fuzzy distance
+        assert_eq!(app.node_near_cursor(20, 9), Some(0));
+        assert_eq!(app.node_near_cursor(20, 10), None);
+    }
+
+    #[test]
+    fn test_recompute_layout_world_x_end() {
+        let mut app = App::new();
+        // Clear main menu nodes
+        app.nodes.clear();
+        
+        let root = 0;
+        app.nodes.push(Node {
+            label: "Root".to_string(),
+            parent: None,
+            children: vec![1],
+            links: vec![],
+            collapsed: true,
+            row: usize::MAX,
+            world_x: 10,
+            world_y: 5,
+            world_x_end: 0,
+        });
+        app.nodes.push(Node {
+            label: "Child".to_string(),
+            parent: Some(0),
+            children: vec![],
+            links: vec![],
+            collapsed: false,
+            row: usize::MAX,
+            world_x: 0,
+            world_y: 0,
+            world_x_end: 0,
+        });
+
+        app.recompute_layout();
+
+        // Root: world_x=10, depth=0, label="Root"(4), collapsed=true, children=[1]
+        // prefix length = 0*2 = 0
+        // prefix + "> " = 0 + 2 = 2
+        // label_cols = 4
+        // suffix_cols = 5 + "1".len() = 6
+        // world_x_end = 10 + 2 + 4 + 6 = 22
+        assert_eq!(app.nodes[root].world_x_end, 22);
+    }
+}
+
