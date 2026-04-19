@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::{App, CanvasState, InputAction, Mode};
 use crate::models::node::Node;
 
@@ -120,6 +121,7 @@ impl App {
             let id = self.nodes.len();
             self.nodes.push(Node {
                 label: buf, parent: None, children: vec![], links: vec![],
+                tags: HashMap::new(),
                 collapsed: false, row: usize::MAX,
                 world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
             });
@@ -330,6 +332,7 @@ impl App {
                 parent,
                 children: vec![],
                 links: vec![],
+                tags: HashMap::new(),
                 collapsed: false,
                 row: usize::MAX,
                 world_x: 0,

@@ -36,8 +36,8 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(titlebar::border_style(&app.mode))
-                .title(titlebar::build_title(&app.mode)),
+                .border_style(titlebar::border_style(&app.mode, &app.palette))
+                .title(titlebar::build_title(&app.mode, &app.palette)),
             area,
         );
 
@@ -67,7 +67,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     }
                 }
             }
-            global_buf.flush(frame, canvas, pal::tinted(pal::ARROW_DIM));
+            global_buf.flush(frame, canvas, pal::tinted(app.palette.arrow_dim));
         }
 
         // ── Highlighted arrow layer ───────────────────────────────────────────
@@ -119,7 +119,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     app.nodes[tgt_id].world_x_end,
                 );
             }
-            arrow_buf.flush(frame, canvas, pal::tinted(pal::LINK_ARROW));
+            arrow_buf.flush(frame, canvas, pal::tinted(app.palette.link_arrow));
         }
 
         // ── Link mode preview arrow ───────────────────────────────────────────
@@ -133,7 +133,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 app.nodes[origin_id].world_x_end,
                 app.cursor_x, app.cursor_y, app.cursor_x,
             );
-            prev.flush(frame, canvas, pal::tinted(pal::LINK));
+            prev.flush(frame, canvas, pal::tinted(app.palette.link));
         }
 
         // ── Bullet lists ──────────────────────────────────────────────────────
@@ -169,25 +169,25 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 Mode::Canvas { state: CanvasState::Link { origin_id } } if *origin_id == id);
 
             let label_style = if is_reparent_subj || is_pick_origin {
-                pal::solid(pal::PICK)
+                pal::solid(app.palette.pick)
             } else if is_link_origin {
-                pal::solid(pal::LINK)
+                pal::solid(app.palette.link)
             } else if is_reparent_cur {
-                pal::solid(pal::REPARENT)
+                pal::solid(app.palette.reparent)
             } else if is_insert_parent {
-                pal::solid(pal::INSERT)
+                pal::solid(app.palette.insert)
             } else if app.has_selection() && id == app.selected {
-                pal::solid(pal::SELECTED)
+                pal::solid(app.palette.selected)
             } else {
-                pal::tinted(pal::NODE)
+                pal::tinted(app.palette.node)
             };
 
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(prefix,             Style::default().fg(pal::PREFIX)),
-                    Span::styled("> ",               Style::default().fg(pal::DIM)),
+                    Span::styled(prefix,             Style::default().fg(app.palette.prefix)),
+                    Span::styled("> ",               Style::default().fg(app.palette.dim)),
                     Span::styled(node.label.clone(), label_style),
-                    Span::styled(collapse_suffix,    Style::default().fg(pal::DIM)),
+                    Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)),
                 ])),
                 Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
             );
@@ -201,8 +201,8 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
                     let (ch, style) = match state {
-                        CanvasState::Pick { .. } => ('⊕', pal::solid(pal::PICK)),
-                        _                        => ('╋', pal::tinted_bold(pal::CANVAS)),
+                        CanvasState::Pick { .. } => ('⊕', pal::solid(app.palette.pick)),
+                        _                        => ('╋', pal::tinted_bold(app.palette.canvas)),
                     };
                     put_char(frame, canvas, sx, sy, ch, style);
                 }
@@ -221,7 +221,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 origin_x, origin_y, ox_end,
                 app.cursor_x, app.cursor_y, app.cursor_x,
             );
-            pick_buf.flush(frame, canvas, pal::tinted(pal::PICK));
+            pick_buf.flush(frame, canvas, pal::tinted(app.palette.pick));
         }
 
         // ── Canvas new-node inline prompt ─────────────────────────────────────
@@ -233,7 +233,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             if sx >= 0 && sy >= 0 {
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
-                    render_input_line(frame, canvas, sx, sy, "> ", buf, text_cursor, pal::INSERT);
+                    render_input_line(frame, canvas, sx, sy, "> ", buf, text_cursor, app.palette.insert, &app.palette);
                 }
             }
         }
@@ -251,7 +251,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 if sx < canvas.width && sy < canvas.height {
                     let trail  = compute_insert_trail(&app.nodes, parent);
                     let prefix = format!("{}>  ", box_prefix(&trail));
-                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, pal::INSERT);
+                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, app.palette.insert, &app.palette);
                 }
             }
         }
@@ -270,12 +270,12 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     let depth = order.get(idx).map(|&(_, d)| d).unwrap_or(0);
                     let trail = build_trail_for(&order, &is_last, idx, depth);
                     let prefix = format!("{}>  ", box_prefix(&trail));
-                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, pal::EDIT);
+                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, app.palette.edit, &app.palette);
                 }
             }
         }
 
-        // ── Canvas new-node inline prompt ─────────────────────────────────────
+        // ── Canvas pick result label overlay ──────────────────────────────────
         if let Mode::Canvas { state: CanvasState::Pick { origin_id, origin_x, origin_y, .. } } = app.mode {
             let sx = origin_x - app.camera_x;
             let sy = origin_y - app.camera_y;
@@ -284,7 +284,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 if sx < canvas.width && sy < canvas.height {
                     let label = &app.nodes[origin_id].label;
                     frame.render_widget(
-                        Paragraph::new(Span::styled(label.clone(), pal::solid(pal::PICK))),
+                        Paragraph::new(Span::styled(label.clone(), pal::solid(app.palette.pick))),
                         Rect { x: canvas.x + sx, y: canvas.y + sy, width: label.chars().count() as u16, height: 1 }
                     );
                 }
@@ -299,14 +299,14 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 format!("({}/{})", match_idx + 1, matches.len())
             };
             let prefix = format!("jump to: {} ", matches_info);
-            render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), &prefix, buf, cursor, pal::EDIT);
+            render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), &prefix, buf, cursor, app.palette.edit, &app.palette);
         }
 
         // ── Pick modal prompt ────────────────────────────────────────────────
         if let Mode::Canvas { state: CanvasState::Pick { ref buf, cursor, .. } } = app.mode {
             if !buf.is_empty() {
                 let prefix = "move to: ";
-                render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), prefix, buf, cursor, pal::INSERT);
+                render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), prefix, buf, cursor, app.palette.insert, &app.palette);
             }
         }
 
@@ -346,20 +346,20 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
     };
 
     let incoming_style = if matches!(&app.mode, Mode::Canvas { state: CanvasState::MenuIncoming }) {
-        pal::solid(pal::LINK_ARROW)
+        pal::solid(app.palette.link_arrow)
     } else {
-        pal::tinted(pal::LINK_ARROW)
+        pal::tinted(app.palette.link_arrow)
     };
     let outgoing_style = if matches!(&app.mode, Mode::Canvas { state: CanvasState::MenuOutgoing }) {
-        pal::solid(pal::LINK_ARROW)
+        pal::solid(app.palette.link_arrow)
     } else {
-        pal::tinted(pal::LINK_ARROW)
+        pal::tinted(app.palette.link_arrow)
     };
 
     let lines = vec![
         Line::from(vec![
             Span::raw(" [g] Global   "),
-            Span::styled(tog(app.arrow.global), pal::tinted(pal::LINK_ARROW)),
+            Span::styled(tog(app.arrow.global), pal::tinted(app.palette.link_arrow)),
         ]),
         Line::from(vec![
             Span::raw(" [i] Incoming "),
@@ -369,7 +369,7 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
             Span::raw(" [o] Outgoing "),
             Span::styled(fid(app.arrow.outgoing), outgoing_style),
         ]),
-        Line::from(Span::styled(hint, Style::default().fg(pal::DIM))),
+        Line::from(Span::styled(hint, Style::default().fg(app.palette.dim))),
     ];
 
     let w: u16 = 52;
@@ -383,7 +383,7 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title(" Arrow Display ")
-                .border_style(pal::tinted(pal::CANVAS))),
+                .border_style(pal::tinted(app.palette.canvas))),
         Rect { x, y, width: w, height: h },
     );
 }
@@ -393,6 +393,7 @@ fn render_input_line(
     canvas: Rect, sx: u16, sy: u16,
     prefix: &str, buf: &str, cursor: usize,
     color: Color,
+    palette: &pal::Palette,
 ) {
     let before    = &buf[..cursor];
     let cur_char  = buf[cursor..].chars().next().unwrap_or(' ');
@@ -402,7 +403,7 @@ fn render_input_line(
     let reset_bg = Style::default().bg(Color::Reset);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(prefix.to_string(),      reset_bg.patch(Style::default().fg(pal::DIM))),
+            Span::styled(prefix.to_string(),      reset_bg.patch(Style::default().fg(palette.dim))),
             Span::styled(before.to_string(),       reset_bg.patch(pal::tinted(color))),
             Span::styled(cur_char.to_string(),     pal::solid(color)),
             Span::styled(after.to_string(),        reset_bg.patch(pal::tinted(color))),
@@ -517,8 +518,8 @@ fn draw_start_menu(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(titlebar::border_style(&app.mode))
-                .title(titlebar::build_title(&app.mode)),
+                .border_style(titlebar::border_style(&app.mode, &app.palette))
+                .title(titlebar::build_title(&app.mode, &app.palette)),
             area,
         );
 
@@ -538,7 +539,7 @@ fn draw_start_menu(
 
         for (i, line) in BANNER.iter().enumerate() {
             frame.render_widget(
-                Paragraph::new(*line).style(Style::default().fg(pal::SELECTED)),
+                Paragraph::new(*line).style(Style::default().fg(app.palette.selected)),
                 Rect { x: banner_x, y: banner_y + i as u16, width: banner_w, height: 1 },
             );
         }
@@ -569,9 +570,9 @@ fn draw_start_menu(
                 else { String::new() };
 
             let (indicator, style) = if app.selected == id {
-                (">", pal::solid(pal::SELECTED))
+                (">", pal::solid(app.palette.selected))
             } else {
-                (" ", pal::tinted(pal::NODE))
+                (" ", pal::tinted(app.palette.node))
             };
 
             let label_lower = node.label.to_lowercase();
@@ -590,9 +591,9 @@ fn draw_start_menu(
             if app.selected == id {
                 prompt_info = match &app.mode {
                     Mode::StartMenu { state: StartMenuState::NewPath { buf, cursor } } =>
-                        Some(("location: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
+                        Some(("location: ".to_string(), buf.as_str(), *cursor, app.palette.insert)),
                     Mode::StartMenu { state: StartMenuState::NewName { buf, cursor, .. } } =>
-                        Some(("project: ".to_string(), buf.as_str(), *cursor, pal::INSERT)),
+                        Some(("project: ".to_string(), buf.as_str(), *cursor, app.palette.insert)),
                     Mode::StartMenu { state: StartMenuState::EditSetting { key, buf, cursor } } => {
                         let prefix = if key.starts_with("rename_project:") {
                             "rename: ".to_string()
@@ -601,11 +602,11 @@ fn draw_start_menu(
                         } else {
                             format!("{}: ", key.replace('_', " "))
                         };
-                        Some((prefix, buf.as_str(), *cursor, pal::EDIT))
+                        Some((prefix, buf.as_str(), *cursor, app.palette.edit))
                     }
                     Mode::StartMenu { state: StartMenuState::Import { buf, cursor, editing_root, .. } } => {
                         let prefix = if *editing_root { "location: ".to_string() } else { "search: ".to_string() };
-                        Some((prefix, buf.as_str(), *cursor, pal::INSERT))
+                        Some((prefix, buf.as_str(), *cursor, app.palette.insert))
                     }
                     _ => None,
                 };
@@ -617,15 +618,15 @@ fn draw_start_menu(
                     frame,
                     Rect { x: menu_x, y: menu_y + idx as u16, width: menu_w, height: 1 },
                     0, 0,
-                    &full_prefix, buf, cursor, color
+                    &full_prefix, buf, cursor, color, &app.palette
                 );
             } else {
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(prefix,             Style::default().fg(pal::PREFIX)),
-                        Span::styled(format!("{} ", indicator), Style::default().fg(pal::DIM)),
+                        Span::styled(prefix,             Style::default().fg(app.palette.prefix)),
+                        Span::styled(format!("{} ", indicator), Style::default().fg(app.palette.dim)),
                         Span::styled(node.label.clone(), style),
-                        Span::styled(collapse_suffix,    Style::default().fg(pal::DIM)),
+                        Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)),
                     ])),
                     Rect {
                         x: menu_x,
@@ -640,7 +641,7 @@ fn draw_start_menu(
                 let shortcut_text = format!("[{}]", key);
                 let shortcut_w = shortcut_text.chars().count() as u16;
                 frame.render_widget(
-                    Paragraph::new(Span::styled(shortcut_text, Style::default().fg(pal::INSERT))),
+                    Paragraph::new(Span::styled(shortcut_text, Style::default().fg(app.palette.insert))),
                     Rect {
                         x: banner_right_x.saturating_sub(shortcut_w),
                         y: menu_y + idx as u16,
@@ -655,7 +656,7 @@ fn draw_start_menu(
         if let Mode::StartMenu { state: StartMenuState::Import { matches, match_idx, .. } } = &app.mode {
             let result_y = menu_y + order.len() as u16 + 1;
             for (i, path) in matches.iter().enumerate() {
-                let style = if i == *match_idx { pal::solid(pal::SELECTED) } else { Style::default().fg(pal::DIM) };
+                let style = if i == *match_idx { pal::solid(app.palette.selected) } else { Style::default().fg(app.palette.dim) };
                 frame.render_widget(
                     Paragraph::new(format!("  {} {}", if i == *match_idx { ">" } else { " " }, path)).style(style),
                     Rect { x: menu_x, y: result_y + i as u16, width: inner.width.saturating_sub(menu_x - inner.x), height: 1 }

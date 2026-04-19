@@ -49,6 +49,7 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
         parent:    r.parent_id.and_then(|pid| id_to_idx.get(&pid).copied()),
         children:  vec![],
         links:     vec![],
+        tags:      HashMap::new(),
         collapsed: r.collapsed,
         row:       usize::MAX,
         world_x:   r.world_x,

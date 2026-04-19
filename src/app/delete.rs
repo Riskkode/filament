@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::App;
 use crate::models::node::Node;
 
@@ -29,6 +30,7 @@ impl App {
                     parent:    node.parent.and_then(|p| remap[p]),
                     children:  node.children.iter().filter_map(|&c| remap[c]).collect(),
                     links:     node.links.iter().filter_map(|&l| remap[l]).collect(),
+                    tags:      node.tags.clone(),
                     collapsed: node.collapsed,
                     row:       usize::MAX,
                     world_x:     node.world_x,

@@ -12,7 +12,7 @@ use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
 pub struct App {
     pub arrow:    ArrowSettings,
@@ -38,6 +38,8 @@ pub struct App {
     pub registry: Registry,
     /// Global application settings.
     pub settings: GlobalSettings,
+    /// Current UI palette.
+    pub palette: crate::ui::palette::Palette,
     /// Transient message shown in the status bar (errors, hints).
     pub status_message: Option<String>,
     /// Stack of previous node states for undo.
@@ -65,12 +67,14 @@ impl App {
             project_created_at: 0,
             registry:           Registry::load(),
             settings:           GlobalSettings::load(),
+            palette:            crate::ui::palette::Palette::dracula(), // Initial, will update below
             status_message:     None,
             undo_stack:         vec![],
             last_link_origin:   None,
             last_link_idx:      0,
             help_previous_mode: None,
         };
+        app.palette = crate::ui::palette::Palette::get_palette(&app.settings.palette);
         app.init_main_menu_nodes();
         app
     }
@@ -243,6 +247,7 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false, // Start expanded
             row: 0,
             world_x: 0,
@@ -259,6 +264,7 @@ impl App {
                 parent: Some(open_idx),
                 children: vec![],
                 links: vec![],
+                tags: HashMap::new(),
                 collapsed: false,
                 row: i + 1,
                 world_x: 0,
@@ -274,6 +280,7 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
@@ -287,6 +294,7 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
@@ -300,6 +308,7 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
@@ -314,6 +323,7 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: true, // Start collapsed
             row: settings_idx,
             world_x: 0,
@@ -328,6 +338,7 @@ impl App {
             parent: Some(settings_idx),
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: path_idx,
             world_x: 0,
@@ -342,6 +353,7 @@ impl App {
             parent: Some(settings_idx),
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: user_idx,
             world_x: 0,
@@ -350,12 +362,49 @@ impl App {
         });
         self.nodes[settings_idx].children.push(user_idx);
 
+        let themes_idx = self.nodes.len();
+        self.nodes.push(Node {
+            label: "🎨 Themes".to_string(),
+            parent: Some(settings_idx),
+            children: vec![],
+            links: vec![],
+            tags: HashMap::new(),
+            collapsed: true,
+            row: themes_idx,
+            world_x: 0,
+            world_y: themes_idx as i32,
+            world_x_end: 0,
+        });
+        self.nodes[settings_idx].children.push(themes_idx);
+
+        let mut theme_names: Vec<String> = crate::ui::palette::Palette::load_all().keys().cloned().collect();
+        theme_names.sort();
+
+        for theme in theme_names {
+            let active = if self.settings.palette == theme { " (active)" } else { "" };
+            let t_idx = self.nodes.len();
+            self.nodes.push(Node {
+                label: format!("{}{}", theme, active),
+                parent: Some(themes_idx),
+                children: vec![],
+                links: vec![],
+                tags: HashMap::new(),
+                collapsed: false,
+                row: t_idx,
+                world_x: 0,
+                world_y: t_idx as i32,
+                world_x_end: 0,
+            });
+            self.nodes[themes_idx].children.push(t_idx);
+        }
+
         // 5. Root: Help
         self.nodes.push(Node {
             label: "❓ Help".to_string(),
             parent: None,
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
@@ -630,6 +679,7 @@ mod tests {
                 parent: None,
                 children: vec![],
                 links: vec![],
+                tags: HashMap::new(),
                 collapsed: false,
                 row: 0,
                 world_x: 10,
@@ -663,6 +713,7 @@ mod tests {
             parent: None,
             children: vec![1],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: true,
             row: usize::MAX,
             world_x: 10,
@@ -674,6 +725,7 @@ mod tests {
             parent: Some(0),
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: usize::MAX,
             world_x: 0,

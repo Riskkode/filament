@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Node {
@@ -8,6 +9,7 @@ pub struct Node {
     /// Outgoing logical links to other nodes (by index). A node may have any
     /// number of outgoing links to distinct targets.
     pub links:     Vec<usize>,
+    pub tags:      HashMap<String, String>,
     pub collapsed: bool,
     /// Row in the combined visible list (`usize::MAX` = hidden).
     pub row:       usize,

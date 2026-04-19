@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::{App, Mode};
 use super::mode::StartMenuState;
 use crate::models::node::Node;
@@ -58,7 +59,8 @@ impl App {
                 } else if label.contains("default filaments path") || label.contains("username") {
                     self.start_menu_edit();
                 } else if let Some(parent) = self.nodes[node_id].parent {
-                    if self.nodes[parent].label.to_lowercase().contains("open") {
+                    let parent_label = self.nodes[parent].label.to_lowercase();
+                    if parent_label.contains("open") {
                         // This is a project node
                         let project_idx = self.nodes[parent].children.iter().position(|&id| id == node_id).unwrap();
                         let path = match self.registry.projects.get(project_idx) {
@@ -66,6 +68,21 @@ impl App {
                             None    => return,
                         };
                         self.load_project(&path);
+                    } else if parent_label.contains("themes") {
+                        // This is a theme node
+                        let theme_name = self.nodes[node_id].label.split_whitespace().next().unwrap_or("").to_string();
+                        self.settings.palette = theme_name.clone();
+                        self.palette = crate::ui::palette::Palette::get_palette(&self.settings.palette);
+                        let _ = self.settings.save();
+                        
+                        // Update labels in the current tree instead of rebuilding
+                        // This prevents the tree from collapsing.
+                        let siblings = self.nodes[parent].children.clone();
+                        for sibling_id in siblings {
+                            let label = self.nodes[sibling_id].label.split_whitespace().next().unwrap_or("").to_string();
+                            let active = if label == theme_name { " (active)" } else { "" };
+                            self.nodes[sibling_id].label = format!("{}{}", label, active);
+                        }
                     }
                 }
             }
@@ -90,6 +107,10 @@ impl App {
                     match key.as_str() {
                         "default_projects_path" => self.settings.default_projects_path = buf.clone(),
                         "username" => self.settings.username = buf.clone(),
+                        "palette" => {
+                            self.settings.palette = buf.clone();
+                            self.palette = crate::ui::palette::Palette::get_palette(&self.settings.palette);
+                        }
                         _ => {}
                     }
                     let _ = self.settings.save();
@@ -259,6 +280,7 @@ impl App {
             parent: Some(new_node_idx),
             children: vec![],
             links: vec![],
+            tags: HashMap::new(),
             collapsed: false,
             row: 0,
             world_x: 0,
