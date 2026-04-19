@@ -1,4 +1,4 @@
-use crate::app::{CanvasState, InputAction, Mode, StartMenuState};
+use crate::app::{CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
 use crate::ui::palette::Palette;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -8,7 +8,7 @@ pub fn border_style(pal: &Palette, mode: &Mode) -> Style {
     Style::default().fg(mode_color(pal, mode))
 }
 
-fn mode_color(pal: &Palette, mode: &Mode) -> Color {
+pub fn mode_color(pal: &Palette, mode: &Mode) -> Color {
     match mode {
         Mode::StartMenu { .. }                                         => pal.canvas,
         Mode::Input { action: InputAction::InsertChild { .. }, .. }    => pal.insert,
@@ -16,11 +16,13 @@ fn mode_color(pal: &Palette, mode: &Mode) -> Color {
         Mode::Reparent { .. }                                          => pal.reparent,
         Mode::Canvas { state: CanvasState::Pick { .. } }              => pal.pick,
         Mode::Canvas { state: CanvasState::Link { .. } }              => pal.link,
-        Mode::Canvas { state: CanvasState::TagStatus }                => pal.edit,
-        Mode::Canvas { state: CanvasState::TagTime }                  => pal.edit,
-        Mode::Canvas { state: CanvasState::TagTimeClear }             => pal.edit,
-        Mode::Canvas { state: CanvasState::TimeInput { .. } }          => pal.edit,
+        Mode::TagStatus { .. }                => pal.edit,
+        Mode::TagTime { .. }                  => pal.edit,
+        Mode::TagTimeClear { .. }             => pal.edit,
+        Mode::TimeInput { .. }                => pal.edit,
         Mode::Canvas { .. }                                            => pal.canvas,
+        Mode::ContextSwitcher { .. }                                   => pal.edit,
+        Mode::StatusPage { .. }                                        => pal.canvas,
         Mode::Help                                                     => pal.pick,
     }
 }
@@ -45,8 +47,35 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
             pal, "IMPORT", pal.insert,
             "type to fuzzy search  ↑↓:nav  Tab:change location  Enter:import  Esc:cancel".to_string(),
         ),
-        Mode::Canvas { state: CanvasState::Browse } => canvas_title(pal),
-
+        Mode::StatusPage { state: sps } => {
+            match sps {
+                StatusPageState::NewQueryName { .. } => modal_title(
+                    pal, "NEW GROUP", pal.insert,
+                    "enter group name  Enter:confirm  Esc:cancel".to_string(),
+                ),
+                StatusPageState::NewQueryLogic { .. } => modal_title(
+                    pal, "QUERY LOGIC", pal.insert,
+                    "enter logic (e.g. status:todo)  Enter:save  Esc:cancel".to_string(),
+                ),
+                _ => status_page_title(pal),
+            }
+        }
+        Mode::TagStatus { .. } => modal_title(
+            pal, "STATUS", pal.edit,
+            "t:todo  p:in progress  c:done  b:blocked  x:clear  Esc:cancel".to_string(),
+        ),
+        Mode::TagTime { .. } => modal_title(
+            pal, "TIME", pal.edit,
+            "d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  x:clear...  Esc:cancel".to_string(),
+        ),
+        Mode::TagTimeClear { .. } => modal_title(
+            pal, "TIME › CLEAR", pal.edit,
+            "d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back".to_string(),
+        ),
+        Mode::TimeInput { time_type, .. } => modal_title(
+            pal, "TIME INPUT", pal.edit,
+            format!("enter {}: tomorrow, friday, 2024-12-01  Enter:confirm  Esc:cancel", time_type),
+        ),
         Mode::Input { action: InputAction::InsertChild { .. }, .. } => modal_title(
             pal, "INSERT", pal.insert,
             "Enter:add  Tab:indent  ⇧Tab:dedent  ←→:cursor  Esc:done".to_string(),
@@ -59,6 +88,7 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
             pal, "REPARENT", pal.reparent,
             "hjkl:navigate  v/↵:confirm  Esc:cancel".to_string(),
         ),
+        Mode::Canvas { state: CanvasState::Browse } => canvas_title(pal),
         Mode::Canvas { state: CanvasState::New { .. } } => modal_title(
             pal, "NEW NODE", pal.insert,
             "type name  Enter:confirm  Esc:cancel".to_string(),
@@ -70,22 +100,6 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
         Mode::Canvas { state: CanvasState::Link { .. } } => modal_title(
             pal, "LINK", pal.link,
             "hjkl:navigate  Enter:toggle link  Esc:cancel".to_string(),
-        ),
-        Mode::Canvas { state: CanvasState::TagStatus } => modal_title(
-            pal, "STATUS", pal.edit,
-            "t:todo  p:in progress  c:done  b:blocked  x:clear  Esc:cancel".to_string(),
-        ),
-        Mode::Canvas { state: CanvasState::TagTime } => modal_title(
-            pal, "TIME", pal.edit,
-            "d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  x:clear...  Esc:cancel".to_string(),
-        ),
-        Mode::Canvas { state: CanvasState::TagTimeClear } => modal_title(
-            pal, "TIME › CLEAR", pal.edit,
-            "d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back".to_string(),
-        ),
-        Mode::Canvas { state: CanvasState::TimeInput { time_type, .. } } => modal_title(
-            pal, "TIME INPUT", pal.edit,
-            format!("enter {}: tomorrow, friday, 2024-12-01  Enter:confirm  Esc:cancel", time_type),
         ),
         Mode::Canvas { state: CanvasState::Goto { .. } } => modal_title(
             pal, "GOTO", pal.edit,
@@ -107,6 +121,11 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
             pal, "HELP", pal.pick,
             "hjkl:navigate  Esc:close".to_string(),
         ),
+        Mode::ContextSwitcher { .. } => modal_title(
+            pal, "CONTEXT", pal.edit,
+            "hjkl:nav  Enter:confirm  shortcuts: f s  Space:cancel".to_string(),
+        ),
+        _ => canvas_title(pal),
     }
 }
 
@@ -117,6 +136,20 @@ fn start_menu_title(pal: &Palette) -> Line<'static> {
         Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
         sep(),
         Span::styled("Welcome ", Style::default().fg(pal.canvas)),
+    ])
+}
+
+fn status_page_title(pal: &Palette) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
+        sep(),
+        Span::styled("Dashboard ", Style::default().fg(pal.canvas)),
+        sep(),
+        bracket(pal, "n", pal.insert), Span::styled(" new group  ", pal.tinted(pal.insert)),
+        bracket(pal, "x", pal.pick),   Span::styled(" delete node  ", pal.tinted(pal.pick)),
+        bracket(pal, "X", pal.pick),   Span::styled(" delete group  ", pal.tinted(pal.pick)),
+        bracket(pal, "s", pal.edit),   Span::styled(" status  ", pal.tinted(pal.edit)),
+        bracket(pal, "t", pal.edit),   Span::styled(" time  ", pal.tinted(pal.edit)),
     ])
 }
 

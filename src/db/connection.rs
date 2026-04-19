@@ -60,6 +60,12 @@ pub fn open(path: &Path) -> Result<Connection> {
             time_pattern TEXT,
             PRIMARY KEY (node_id, time_type)
         );
+
+        CREATE TABLE IF NOT EXISTS queries (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            name  TEXT NOT NULL,
+            logic TEXT NOT NULL
+        );
     ")?;
 
     // Migration: Add time_pattern column if it doesn't exist.

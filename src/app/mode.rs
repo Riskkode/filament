@@ -5,9 +5,30 @@ pub enum Mode {
     /// Ground state. hjkl moves the world cursor; everything else is a
     /// sub-mode entered from here.
     Canvas   { state: CanvasState },
-    Input    { action: InputAction, buf: String, cursor: usize },
+    Input    { action: InputAction, buf: String, cursor: usize, previous: Box<Mode> },
     Reparent { subject: usize, orig_parent: Option<usize>, orig_pos: usize, cursor: usize },
+    /// Global context switching overlay.
+    ContextSwitcher { selected: usize, previous: Box<Mode> },
+    /// Status Page / Query Centre.
+    StatusPage { state: StatusPageState },
+    /// Status tagging chord waiting for next key.
+    TagStatus { previous: Box<Mode> },
+    /// Time tagging chord waiting for next key.
+    TagTime { previous: Box<Mode> },
+    /// Time tagging clear chord waiting for next key.
+    TagTimeClear { previous: Box<Mode> },
+    /// Time tagging: user is typing the date/time string.
+    TimeInput { time_type: String, buf: String, cursor: usize, previous: Box<Mode> },
     Help,
+}
+
+#[derive(Clone)]
+pub enum StatusPageState {
+    Browse { group_idx: usize, item_idx: Option<usize> },
+    NewQueryName { buf: String, cursor: usize },
+    NewQueryLogic { name: String, buf: String, cursor: usize },
+    EditQueryName { idx: usize, buf: String, cursor: usize },
+    EditQueryLogic { idx: usize, name: String, buf: String, cursor: usize },
 }
 
 #[derive(Clone)]
@@ -67,14 +88,6 @@ pub enum CanvasState {
     Pick { origin_id: usize, origin_x: i32, origin_y: i32, buf: String, cursor: usize },
     /// Linking: navigate cursor to a target; Enter toggles the link, Esc cancels.
     Link { origin_id: usize },
-    /// Status tagging chord waiting for next key.
-    TagStatus,
-    /// Time tagging chord waiting for next key.
-    TagTime,
-    /// Time tagging clear chord waiting for next key.
-    TagTimeClear,
-    /// Time tagging: user is typing the date/time string.
-    TimeInput { time_type: String, buf: String, cursor: usize },
     /// Quick jump to node by name.
     Goto { buf: String, cursor: usize, matches: Vec<usize>, match_idx: usize, previous: Box<CanvasState> },
     /// Arrow-display settings menu open — waiting for i / o / g / F / Esc.

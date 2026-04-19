@@ -4,10 +4,12 @@ mod delete;
 mod input;
 mod start_menu;
 mod reparent;
+pub mod query;
 
-pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState};
+pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
 
 use crate::models::node::Node;
+use crate::models::query::StatusQuery;
 use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
@@ -19,6 +21,8 @@ use chrono::{Local, Utc};
 pub struct App {
     pub arrow:    ArrowSettings,
     pub nodes:    Vec<Node>,
+    /// User defined queries for the Status page.
+    pub queries:  Vec<StatusQuery>,
     /// The node currently under (or nearest to) the world cursor.
     /// Valid only when `has_selection()` is true.
     pub selected: usize,
@@ -59,6 +63,7 @@ impl App {
         let mut app = Self {
             arrow:    ArrowSettings::default(),
             nodes:    vec![],
+            queries:  vec![],
             selected: 0,
             camera_x: 0,
             camera_y: 0,
@@ -125,7 +130,7 @@ impl App {
     /// `<base>/.filament/` and applies the state to `self`.
     pub fn load_project(&mut self, base: &std::path::Path) {
         use crate::db::connection;
-        use crate::repositories::node_repository;
+        use crate::repositories::{node_repository, query_repository};
 
         let settings = match ProjectSettings::load(base) {
             Ok(s) => s,
@@ -143,6 +148,7 @@ impl App {
             Err(e) => { self.status_message = Some(format!("load error: {e}")); return; }
         };
 
+        self.queries = query_repository::load_queries(&conn).unwrap_or_default();
         self.nodes    = nodes;
         self.camera_x = settings.view.camera_x;
         self.camera_y = settings.view.camera_y;
@@ -170,7 +176,7 @@ impl App {
     /// Silent no-op when no project is open.
     pub fn save_project(&mut self) {
         use crate::db::connection;
-        use crate::repositories::node_repository;
+        use crate::repositories::{node_repository, query_repository};
 
         let Some(base) = &self.project_path else { return };
 
@@ -184,6 +190,8 @@ impl App {
             Ok(m) => m,
             Err(_) => return,
         };
+
+        let _ = query_repository::save_queries(&conn, &self.queries);
         
         // Save to history too
         let _ = node_repository::push_history(&conn, &self.nodes);
@@ -440,6 +448,37 @@ impl App {
     pub fn has_selection(&self) -> bool {
         self.selected < self.nodes.len()
             && self.node_near_cursor(self.cursor_x, self.cursor_y).is_some()
+    }
+
+    // ── Queries ──────────────────────────────────────────────────────────────
+
+    pub fn status_add_query(&mut self, name: String, logic: String) {
+        self.queries.push(StatusQuery { id: None, name, logic });
+        self.save_project();
+    }
+
+    pub fn status_remove_query(&mut self, idx: usize) {
+        if idx < self.queries.len() {
+            self.queries.remove(idx);
+            self.save_project();
+        }
+    }
+
+    pub fn status_update_query(&mut self, idx: usize, name: String, logic: String) {
+        if idx < self.queries.len() {
+            self.queries[idx].name = name;
+            self.queries[idx].logic = logic;
+            self.save_project();
+        }
+    }
+
+    pub fn get_query_results(&self, query_idx: usize) -> Vec<usize> {
+        if query_idx >= self.queries.len() { return vec![]; }
+        let logic = &self.queries[query_idx].logic;
+        self.nodes.iter().enumerate()
+            .filter(|(_, n)| crate::app::query::evaluate(logic, n))
+            .map(|(i, _)| i)
+            .collect()
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────

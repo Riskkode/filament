@@ -1,4 +1,4 @@
-use super::{App, CanvasState, InputAction, Mode, move_cursor_in_buf};
+use super::{App, CanvasState, InputAction, Mode, StatusPageState, move_cursor_in_buf};
 use crate::models::node::{Node, TimeTag};
 use std::collections::HashMap;
 use chrono::{Local, Utc};
@@ -134,6 +134,7 @@ impl App {
                 action: InputAction::InsertChild { parent: id },
                 buf: String::new(),
                 cursor: 0,
+                previous: Box::new(Mode::Canvas { state: CanvasState::Browse }),
             };
         } else {
             self.mode = Mode::Canvas { state: CanvasState::Browse };
@@ -151,16 +152,29 @@ impl App {
 
     /// `s` — enter Status Tagging state from the currently selected node.
     pub fn canvas_start_status_tagging(&mut self) {
-        if !self.has_selection() { return; }
-        self.mode = Mode::Canvas { state: CanvasState::TagStatus };
+        if let Mode::StatusPage { state: StatusPageState::Browse { group_idx, item_idx: Some(item_idx) } } = &self.mode {
+            let nodes = self.get_query_results(*group_idx);
+            if let Some(&node_id) = nodes.get(*item_idx) {
+                self.selected = node_id;
+            } else { return; }
+        } else if !self.has_selection() {
+            return;
+        }
+        self.mode = Mode::TagStatus { previous: Box::new(self.mode.clone()) };
     }
 
     /// Set or clear the "status" tag on the currently selected node.
     pub fn canvas_set_status(&mut self, status: Option<&str>) {
-        if !self.has_selection() {
-            self.mode = Mode::Canvas { state: CanvasState::Browse };
-            return;
-        }
+        let previous = if let Mode::TagStatus { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else if let Mode::TagTime { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else if let Mode::TagTimeClear { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else {
+            None
+        };
+
         let id = self.selected;
         self.push_undo();
         if let Some(s) = status {
@@ -168,35 +182,52 @@ impl App {
         } else {
             self.nodes[id].tags.remove("status");
         }
-        self.mode = Mode::Canvas { state: CanvasState::Browse };
+        
+        if let Some(prev) = previous {
+            self.mode = *prev;
+        } else {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+        }
         self.save_project();
     }
 
     /// `t` — enter Time Tagging state from the currently selected node.
     pub fn canvas_start_time_tagging(&mut self) {
-        if !self.has_selection() { return; }
-        self.mode = Mode::Canvas { state: CanvasState::TagTime };
+        if let Mode::StatusPage { state: StatusPageState::Browse { group_idx, item_idx: Some(item_idx) } } = &self.mode {
+            let nodes = self.get_query_results(*group_idx);
+            if let Some(&node_id) = nodes.get(*item_idx) {
+                self.selected = node_id;
+            } else { return; }
+        } else if !self.has_selection() {
+            return;
+        }
+        self.mode = Mode::TagTime { previous: Box::new(self.mode.clone()) };
     }
 
     pub fn canvas_start_time_input(&mut self, time_type: &str) {
-        self.mode = Mode::Canvas { 
-            state: CanvasState::TimeInput { 
-                time_type: time_type.to_string(), 
-                buf: String::new(), 
-                cursor: 0 
-            } 
+        let previous = if let Mode::TagTime { previous, .. } = &self.mode {
+            previous.clone()
+        } else {
+            Box::new(self.mode.clone())
+        };
+
+        self.mode = Mode::TimeInput { 
+            time_type: time_type.to_string(), 
+            buf: String::new(), 
+            cursor: 0,
+            previous
         };
     }
 
     pub fn canvas_time_char(&mut self, c: char) {
-        if let Mode::Canvas { state: CanvasState::TimeInput { ref mut buf, ref mut cursor, .. } } = self.mode {
+        if let Mode::TimeInput { ref mut buf, ref mut cursor, .. } = self.mode {
             buf.insert(*cursor, c);
             *cursor += c.len_utf8();
         }
     }
 
     pub fn canvas_time_backspace(&mut self) {
-        if let Mode::Canvas { state: CanvasState::TimeInput { ref mut buf, ref mut cursor, .. } } = self.mode {
+        if let Mode::TimeInput { ref mut buf, ref mut cursor, .. } = self.mode {
             if *cursor > 0 {
                 let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
                 buf.drain(prev..*cursor);
@@ -206,19 +237,19 @@ impl App {
     }
 
     pub fn canvas_time_move_cursor(&mut self, delta: i32) {
-        if let Mode::Canvas { state: CanvasState::TimeInput { ref buf, ref mut cursor, .. } } = self.mode {
+        if let Mode::TimeInput { ref buf, ref mut cursor, .. } = self.mode {
             move_cursor_in_buf(buf, cursor, delta);
         }
     }
 
     pub fn canvas_confirm_time(&mut self) {
-        let (time_type, buf) = match &self.mode {
-            Mode::Canvas { state: CanvasState::TimeInput { time_type, buf, .. } } => (time_type.clone(), buf.clone()),
+        let (time_type, buf, previous) = match &self.mode {
+            Mode::TimeInput { time_type, buf, previous, .. } => (time_type.clone(), buf.clone(), previous.clone()),
             _ => return,
         };
 
         if !self.has_selection() {
-            self.mode = Mode::Canvas { state: CanvasState::Browse };
+            self.mode = *previous;
             return;
         }
 
@@ -248,7 +279,8 @@ impl App {
                 };
 
                 self.nodes[id].times.insert(time_type, TimeTag { timestamp, pattern });
-                self.mode = Mode::Canvas { state: CanvasState::Browse };
+
+                self.mode = *previous;
                 self.save_project();
             }
             Err(_) => {
@@ -258,8 +290,20 @@ impl App {
     }
 
     pub fn canvas_set_time(&mut self, time_type: Option<&str>) {
+        let previous = if let Mode::TagTime { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else if let Mode::TagTimeClear { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else {
+            None
+        };
+
         if !self.has_selection() {
-            self.mode = Mode::Canvas { state: CanvasState::Browse };
+            if let Some(prev) = previous {
+                self.mode = *prev;
+            } else {
+                self.mode = Mode::Canvas { state: CanvasState::Browse };
+            }
             return;
         }
         let id = self.selected;
@@ -278,7 +322,12 @@ impl App {
             // I'll make it clear all time tags on the node.
             self.nodes[id].times.clear();
         }
-        self.mode = Mode::Canvas { state: CanvasState::Browse };
+        
+        if let Some(prev) = previous {
+            self.mode = *prev;
+        } else {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+        }
         self.save_project();
     }
 

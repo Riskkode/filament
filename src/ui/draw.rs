@@ -1,12 +1,12 @@
-use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState};
+use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
 use crate::ui::palette::Palette;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
 use crate::ui::widgets::{route_link_into_buf, ArrowBuf, put_char};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::Rect,
-    style::{Color, Style},
+    layout::{Rect, Layout, Constraint, Direction},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
     Terminal,
@@ -289,7 +289,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
 
         // ── Insert inline prompt ──────────────────────────────────────────────
-        if let Mode::Input { action: InputAction::InsertChild { parent }, ref buf, cursor } = app.mode {
+        if let Mode::Input { action: InputAction::InsertChild { parent }, ref buf, cursor, .. } = app.mode {
             let subtree = app.collect_subtree(parent);
             let visible = subtree.iter().filter(|&&id| app.nodes[id].row != usize::MAX).count();
             let wy = app.nodes[parent].world_y + visible as i32;
@@ -309,7 +309,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         // ── Edit inline prompt ────────────────────────────────────────────────
         if let Mode::Input {
             action: InputAction::EditLabel { node } | InputAction::Overwrite { node },
-            ref buf, cursor
+            ref buf, cursor, ..
         } = app.mode {
             let sx = app.nodes[node].world_x - app.camera_x;
             let sy = app.nodes[node].world_y - app.camera_y;
@@ -363,6 +363,11 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         // ── Arrow settings menu overlay ───────────────────────────────────────
         draw_arrow_menu(frame, canvas, app);
 
+        // ── Modal overlays ───────────────────────────────────────────────────
+        if let Mode::ContextSwitcher { .. } = &app.mode {
+            draw_context_switcher(frame, area, app);
+        }
+
         // ── Status bar ────────────────────────────────────────────────────────
         let status = build_status(app);
         frame.render_widget(
@@ -371,6 +376,53 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         );
     })?;
     Ok(())
+}
+
+pub(crate) fn draw_context_switcher(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let Mode::ContextSwitcher { selected, .. } = app.mode else { return };
+
+    let width = 40u16;
+    let height = 5u16;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect { x, y, width, height };
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Context Switcher ")
+            .border_style(Style::default().fg(app.palette.edit)),
+        popup_area,
+    );
+
+    let options = [
+        ("f", "Filaments", 0),
+        ("s", "Status",    1),
+    ];
+
+    let list_area = popup_area.inner(ratatui::layout::Margin { horizontal: 2, vertical: 1 });
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(list_area);
+
+    for (i, (key, label, idx)) in options.iter().enumerate() {
+        let style = if selected == *idx {
+            app.palette.solid(app.palette.selected)
+        } else {
+            app.palette.tinted(app.palette.node)
+        };
+
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!("[{}] ", key), Style::default().fg(app.palette.insert).add_modifier(Modifier::BOLD)),
+                Span::styled(*label, style),
+            ])),
+            chunks[i],
+        );
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -438,13 +490,18 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
     );
 }
 
-fn render_input_line(
-    frame: &mut ratatui::Frame,
-    canvas: Rect, sx: u16, sy: u16,
-    prefix: &str, buf: &str, cursor: usize,
-    pal: &Palette,
-    color: Color,
+pub fn render_input_line(
+    frame:  &mut ratatui::Frame,
+    canvas: Rect,
+    sx:     u16,
+    sy:     u16,
+    prefix: &str,
+    buf:    &str,
+    cursor: usize,
+    pal:    &Palette,
+    color:  Color,
 ) {
+
     let before    = &buf[..cursor];
     let cur_char  = buf[cursor..].chars().next().unwrap_or(' ');
     let after_off = cursor + cur_char.len_utf8();
@@ -473,7 +530,7 @@ fn build_trail_for(order: &[(usize, usize)], is_last: &[bool], idx: usize, depth
     trail
 }
 
-fn build_status(app: &App) -> String {
+pub fn build_status(app: &App) -> String {
     match &app.mode {
         Mode::StartMenu { state: StartMenuState::Main { selected } } => {
             if let Some(n) = app.nodes.get(*selected) {
@@ -504,6 +561,16 @@ fn build_status(app: &App) -> String {
             format!(" editing \"{}\" → \"{}\" ", app.nodes[*node].label, buf),
         Mode::Reparent { subject, cursor, .. } =>
             format!(" reparenting \"{}\" → child of \"{}\" ", app.nodes[*subject].label, app.nodes[*cursor].label),
+        Mode::ContextSwitcher { selected, .. } =>
+            format!(" Context: {} │ Space:toggle  hjkl:navigate  Enter:confirm  shortcuts: f s ", if *selected == 0 { "Filaments" } else { "Status" }),
+        Mode::StatusPage { state: sps } => {
+            match sps {
+                StatusPageState::Browse { .. } => " Status Page │ n:new group  x:delete last  Space:context switcher ".to_string(),
+                StatusPageState::NewQueryName { .. } => " enter group name  Enter:next  Esc:cancel ".to_string(),
+                StatusPageState::NewQueryLogic { .. } => " enter query (e.g. status:todo AND deadline < tomorrow)  Enter:save  Esc:cancel ".to_string(),
+                _ => " Status Page ".to_string(),
+            }
+        }
         Mode::Canvas { state: CanvasState::Menu | CanvasState::MenuIncoming | CanvasState::MenuOutgoing } =>
             format!(" arrow display │ global {} │ incoming {} │ outgoing {} ",
                 if app.arrow.global { "ON" } else { "off" },
@@ -538,13 +605,13 @@ fn build_status(app: &App) -> String {
         }
         Mode::Canvas { state: CanvasState::Goto { buf, .. } } =>
             format!(" finding node: \"{}\" ", buf),
-        Mode::Canvas { state: CanvasState::TagStatus } =>
+        Mode::TagStatus { .. } =>
             " status tag │ t:todo  p:progress  c:done  b:blocked  x:clear  Esc:cancel ".to_string(),
-        Mode::Canvas { state: CanvasState::TagTime } =>
+        Mode::TagTime { .. } =>
             " time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  x:clear...  Esc:cancel ".to_string(),
-        Mode::Canvas { state: CanvasState::TagTimeClear } =>
+        Mode::TagTimeClear { .. } =>
             " clear time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back ".to_string(),
-        Mode::Canvas { state: CanvasState::TimeInput { time_type, buf, .. } } =>
+        Mode::TimeInput { time_type, buf, .. } =>
             format!(" enter {} │ \"{}\" ", time_type, buf),
         Mode::Help =>
             " Browsing Help tree │ hjkl:navigate  z:toggle  Esc/?:close ".to_string(),

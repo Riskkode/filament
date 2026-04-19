@@ -9,6 +9,7 @@ impl App {
         self.mode = Mode::Input {
             action: InputAction::InsertChild { parent: self.selected },
             buf: String::new(), cursor: 0,
+            previous: Box::new(self.mode.clone()),
         };
     }
 
@@ -17,7 +18,11 @@ impl App {
         if !self.has_selection() { return; }
         let buf = self.nodes[self.selected].label.clone();
         let cursor = buf.len();
-        self.mode = Mode::Input { action: InputAction::EditLabel { node: self.selected }, buf, cursor };
+        self.mode = Mode::Input {
+            action: InputAction::EditLabel { node: self.selected },
+            buf, cursor,
+            previous: Box::new(self.mode.clone()),
+        };
     }
 
     /// `E` — overwrite selected node's label; starts with empty buffer.
@@ -26,6 +31,7 @@ impl App {
         self.mode = Mode::Input {
             action: InputAction::Overwrite { node: self.selected },
             buf: String::new(), cursor: 0,
+            previous: Box::new(self.mode.clone()),
         };
     }
 
@@ -73,18 +79,14 @@ impl App {
     }
 
     pub fn confirm_input(&mut self) {
-        let action = match &self.mode {
-            Mode::Input { action, .. } => action.clone(),
-            _ => return,
-        };
-        let buf = match &self.mode {
-            Mode::Input { buf, .. } => buf.clone(),
+        let (action, buf, previous) = match &self.mode {
+            Mode::Input { action, buf, previous, .. } => (action.clone(), buf.clone(), previous.clone()),
             _ => return,
         };
 
         match action {
             InputAction::InsertChild { parent } => {
-                if buf.is_empty() { self.mode = Mode::Canvas { state: CanvasState::Browse }; return; }
+                if buf.is_empty() { self.mode = *previous; return; }
                 self.push_undo();
                 let new_idx = self.nodes.len();
                 self.nodes.push(Node {
@@ -99,6 +101,7 @@ impl App {
                 self.mode = Mode::Input {
                     action: InputAction::InsertChild { parent },
                     buf: String::new(), cursor: 0,
+                    previous,
                 };
             }
             InputAction::EditLabel { node } | InputAction::Overwrite { node } => {
@@ -106,13 +109,17 @@ impl App {
                     self.push_undo();
                     self.nodes[node].label = buf;
                 }
-                self.mode = Mode::Canvas { state: CanvasState::Browse };
+                self.mode = *previous;
             }
         }
     }
 
     pub fn cancel_input(&mut self) {
-        self.mode = Mode::Canvas { state: CanvasState::Browse };
+        if let Mode::Input { previous, .. } = &self.mode {
+            self.mode = *previous.clone();
+        } else {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+        }
     }
 
     /// Scroll so the pending insertion point is visible (InsertChild only).

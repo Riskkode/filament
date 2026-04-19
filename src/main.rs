@@ -13,7 +13,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
-use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState};
+use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
 use ui::draw::draw;
 
 fn main() -> io::Result<()> {
@@ -24,7 +24,24 @@ fn main() -> io::Result<()> {
     let mut app = App::new();
 
     loop {
-        draw(&mut terminal, &mut app)?;
+        fn is_status_background(mode: &Mode) -> bool {
+            match mode {
+                Mode::StatusPage { .. } => true,
+                Mode::ContextSwitcher { previous, .. }
+                | Mode::Input { previous, .. }
+                | Mode::TagStatus { previous, .. }
+                | Mode::TagTime { previous, .. }
+                | Mode::TagTimeClear { previous, .. }
+                | Mode::TimeInput { previous, .. } => is_status_background(previous),
+                _ => false,
+            }
+        }
+
+        if is_status_background(&app.mode) {
+            ui::status::draw_status_page(&mut terminal, &mut app)?;
+        } else {
+            draw(&mut terminal, &mut app)?;
+        }
 
         if let Event::Key(key) = event::read()? {
             let (tw, th) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -91,6 +108,48 @@ fn main() -> io::Result<()> {
                     _ => {}
                 },
 
+                // ── Tagging ──────────────────────────────────────────────────
+                Mode::TagStatus { ref previous } => match key.code {
+                    KeyCode::Char('t') => app.canvas_set_status(Some("todo")),
+                    KeyCode::Char('p') => app.canvas_set_status(Some("in_progress")),
+                    KeyCode::Char('c') => app.canvas_set_status(Some("completed")),
+                    KeyCode::Char('b') => app.canvas_set_status(Some("blocked")),
+                    KeyCode::Char('x') => app.canvas_set_status(None),
+                    KeyCode::Char('s') | KeyCode::Esc => app.mode = *previous.clone(),
+                    _ => {}
+                },
+                Mode::TagTime { ref previous } => match key.code {
+                    KeyCode::Char('d') => app.canvas_start_time_input("deadline"),
+                    KeyCode::Char('s') => app.canvas_start_time_input("start"),
+                    KeyCode::Char('e') => app.canvas_start_time_input("end"),
+                    KeyCode::Char('c') => app.canvas_start_time_input("checkpoint"),
+                    KeyCode::Char('u') => app.canvas_start_time_input("duration"),
+                    KeyCode::Char('r') => app.canvas_start_time_input("recurring"),
+                    KeyCode::Char('x') => app.mode = Mode::TagTimeClear { previous: previous.clone() },
+                    KeyCode::Char('t') | KeyCode::Esc => app.mode = *previous.clone(),
+                    _ => {}
+                },
+                Mode::TagTimeClear { ref previous } => match key.code {
+                    KeyCode::Char('d') => app.canvas_set_time(Some("deadline")),
+                    KeyCode::Char('s') => app.canvas_set_time(Some("start")),
+                    KeyCode::Char('e') => app.canvas_set_time(Some("end")),
+                    KeyCode::Char('c') => app.canvas_set_time(Some("checkpoint")),
+                    KeyCode::Char('u') => app.canvas_set_time(Some("duration")),
+                    KeyCode::Char('r') => app.canvas_set_time(Some("recurring")),
+                    KeyCode::Char('a') | KeyCode::Char('x') => app.canvas_set_time(None),
+                    KeyCode::Esc => app.mode = Mode::TagTime { previous: previous.clone() },
+                    _ => {}
+                },
+                Mode::TimeInput { ref previous, .. } => match key.code {
+                    KeyCode::Enter => app.canvas_confirm_time(),
+                    KeyCode::Esc   => app.mode = Mode::TagTime { previous: previous.clone() },
+                    KeyCode::Backspace => app.canvas_time_backspace(),
+                    KeyCode::Left  => app.canvas_time_move_cursor(-1),
+                    KeyCode::Right => app.canvas_time_move_cursor(1),
+                    KeyCode::Char(c) => app.canvas_time_char(c),
+                    _ => {}
+                },
+
                 // ── Reparent ─────────────────────────────────────────────────
                 Mode::Reparent { .. } => {
                     app.recompute_layout();
@@ -102,6 +161,156 @@ fn main() -> io::Result<()> {
                         (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => { app.reparent_nav_parent();     app.scroll_to_selected(canvas_h); }
                         (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => { app.reparent_nav_child();      app.scroll_to_selected(canvas_h); }
                         _ => {}
+                    }
+                }
+
+                // ── Context Switcher ─────────────────────────────────────────
+                Mode::ContextSwitcher { selected, ref previous } => {
+                    match key.code {
+                        KeyCode::Char('f') => app.mode = Mode::Canvas { state: CanvasState::Browse },
+                        KeyCode::Char('s') => app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } },
+                        KeyCode::Char('h') | KeyCode::Left  => app.mode = Mode::ContextSwitcher { selected: selected.saturating_sub(1), previous: previous.clone() },
+                        KeyCode::Char('l') | KeyCode::Right => app.mode = Mode::ContextSwitcher { selected: (selected + 1).min(1), previous: previous.clone() },
+                        KeyCode::Enter => {
+                            if selected == 0 { app.mode = Mode::Canvas { state: CanvasState::Browse }; }
+                            else { app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } }; }
+                        }
+                        KeyCode::Esc | KeyCode::Char(' ') => app.mode = *previous.clone(),
+                        _ => {}
+                    }
+                }
+
+                // ── Status Page ──────────────────────────────────────────────
+                Mode::StatusPage { state: ref sps } => {
+                    match sps {
+                        StatusPageState::Browse { group_idx, item_idx } => {
+                            let g_idx = *group_idx;
+                            let i_idx = *item_idx;
+                            match key.code {
+                                KeyCode::Char(' ') => app.mode = Mode::ContextSwitcher { selected: 1, previous: Box::new(app.mode.clone()) },
+                                KeyCode::Char('q') => app.quit_to_main_menu(),
+                                KeyCode::Char('n') => app.mode = Mode::StatusPage { state: StatusPageState::NewQueryName { buf: String::new(), cursor: 0 } },
+                                KeyCode::Char('x') => {
+                                    // Delete node if item selected
+                                    if let Some(i) = i_idx {
+                                        let results = app.get_query_results(g_idx);
+                                        if let Some(&node_id) = results.get(i) {
+                                            app.selected = node_id;
+                                            app.delete_selected();
+                                            // Reset item selection as results changed
+                                            app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: g_idx, item_idx: None } };
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('X') => {
+                                    // Delete group
+                                    if !app.queries.is_empty() { app.status_remove_query(g_idx); }
+                                }
+                                KeyCode::Enter => {
+                                    // Jump to node in filaments view
+                                    if let Some(i) = i_idx {
+                                        let results = app.get_query_results(g_idx);
+                                        if let Some(&node_id) = results.get(i) {
+                                            app.selected = node_id;
+                                            app.center_on_selected(canvas_w as u16, canvas_h as u16);
+                                            app.mode = Mode::Canvas { state: CanvasState::Browse };
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('h') | KeyCode::Left => {
+                                    app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: g_idx.saturating_sub(1), item_idx: None } };
+                                }
+                                KeyCode::Char('l') | KeyCode::Right => {
+                                    app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: (g_idx + 1).min(app.queries.len().saturating_sub(1)), item_idx: None } };
+                                }
+                                KeyCode::Char('j') | KeyCode::Down => {
+                                    let results = app.get_query_results(g_idx);
+                                    if !results.is_empty() {
+                                        let next = match i_idx {
+                                            Some(i) => (i + 1).min(results.len() - 1),
+                                            None => 0,
+                                        };
+                                        app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: g_idx, item_idx: Some(next) } };
+                                    }
+                                }
+                                KeyCode::Char('k') | KeyCode::Up => {
+                                    let results = app.get_query_results(g_idx);
+                                    if !results.is_empty() {
+                                        let next = match i_idx {
+                                            Some(i) => i.saturating_sub(1),
+                                            None => 0,
+                                        };
+                                        app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: g_idx, item_idx: Some(next) } };
+                                    }
+                                }
+                                KeyCode::Char('s') => app.canvas_start_status_tagging(),
+                                KeyCode::Char('t') => app.canvas_start_time_tagging(),
+                                _ => {}
+                            }
+                        }
+                        StatusPageState::NewQueryName { buf, cursor } => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    if !buf.is_empty() {
+                                        app.mode = Mode::StatusPage { state: StatusPageState::NewQueryLogic { name: buf.clone(), buf: String::new(), cursor: 0 } };
+                                    }
+                                }
+                                KeyCode::Esc => app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } },
+                                KeyCode::Backspace => {
+                                    let mut b = buf.clone();
+                                    let mut c = *cursor;
+                                    if c > 0 {
+                                        let prev = b[..c].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                                        b.drain(prev..c);
+                                        c = prev;
+                                    }
+                                    app.mode = Mode::StatusPage { state: StatusPageState::NewQueryName { buf: b, cursor: c } };
+                                }
+                                KeyCode::Char(ch) => {
+                                    let mut b = buf.clone();
+                                    let mut c = *cursor;
+                                    b.insert(c, ch);
+                                    c += ch.len_utf8();
+                                    app.mode = Mode::StatusPage { state: StatusPageState::NewQueryName { buf: b, cursor: c } };
+                                }
+                                _ => {}
+                            }
+                        }
+                        StatusPageState::NewQueryLogic { name, buf, cursor } => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    app.status_add_query(name.clone(), buf.clone());
+                                    app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } };
+                                }
+                                KeyCode::Esc => app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } },
+                                KeyCode::Backspace => {
+                                    let mut b = buf.clone();
+                                    let mut c = *cursor;
+                                    if c > 0 {
+                                        let prev = b[..c].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                                        b.drain(prev..c);
+                                        c = prev;
+                                    }
+                                    app.mode = Mode::StatusPage { state: StatusPageState::NewQueryLogic { name: name.clone(), buf: b, cursor: c } };
+                                }
+                                KeyCode::Char(ch) => {
+                                    let mut b = buf.clone();
+                                    let mut c = *cursor;
+                                    b.insert(c, ch);
+                                    c += ch.len_utf8();
+                                    app.mode = Mode::StatusPage { state: StatusPageState::NewQueryLogic { name: name.clone(), buf: b, cursor: c } };
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {
+                            // Any other substate (like Esc from input)
+                            if let Event::Key(k) = event::read()? {
+                                if k.code == KeyCode::Esc {
+                                     app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } };
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -149,58 +358,6 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
-                            _ => {}
-                        }
-                    }
-                    // TagStatus sub-state: wait for t, p, c, b, x
-                    else if let CanvasState::TagStatus = cs {
-                        match key.code {
-                            KeyCode::Char('t') => app.canvas_set_status(Some("todo")),
-                            KeyCode::Char('p') => app.canvas_set_status(Some("in_progress")),
-                            KeyCode::Char('c') => app.canvas_set_status(Some("completed")),
-                            KeyCode::Char('b') => app.canvas_set_status(Some("blocked")),
-                            KeyCode::Char('x') => app.canvas_set_status(None),
-                            KeyCode::Char('s') | KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Browse },
-                            _ => {}
-                        }
-                    }
-                    // TagTime sub-state: wait for d, s, e, c, u, r
-                    else if let CanvasState::TagTime = cs {
-                        match key.code {
-                            KeyCode::Char('d') => app.canvas_start_time_input("deadline"),
-                            KeyCode::Char('s') => app.canvas_start_time_input("start"),
-                            KeyCode::Char('e') => app.canvas_start_time_input("end"),
-                            KeyCode::Char('c') => app.canvas_start_time_input("checkpoint"),
-                            KeyCode::Char('u') => app.canvas_start_time_input("duration"),
-                            KeyCode::Char('r') => app.canvas_start_time_input("recurring"),
-                            KeyCode::Char('x') => app.mode = Mode::Canvas { state: CanvasState::TagTimeClear },
-                            KeyCode::Char('t') | KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Browse },
-                            _ => {}
-                        }
-                    }
-                    // TagTimeClear sub-state: wait for d, s, e, c, u, r, a (all)
-                    else if let CanvasState::TagTimeClear = cs {
-                        match key.code {
-                            KeyCode::Char('d') => app.canvas_set_time(Some("deadline")),
-                            KeyCode::Char('s') => app.canvas_set_time(Some("start")),
-                            KeyCode::Char('e') => app.canvas_set_time(Some("end")),
-                            KeyCode::Char('c') => app.canvas_set_time(Some("checkpoint")),
-                            KeyCode::Char('u') => app.canvas_set_time(Some("duration")),
-                            KeyCode::Char('r') => app.canvas_set_time(Some("recurring")),
-                            KeyCode::Char('a') | KeyCode::Char('x') => app.canvas_set_time(None),
-                            KeyCode::Esc       => app.mode = Mode::Canvas { state: CanvasState::TagTime },
-                            _ => {}
-                        }
-                    }
-                    // TimeInput sub-state: type the date/duration
-                    else if let CanvasState::TimeInput { .. } = cs {
-                        match key.code {
-                            KeyCode::Enter     => app.canvas_confirm_time(),
-                            KeyCode::Esc       => app.mode = Mode::Canvas { state: CanvasState::TagTime },
-                            KeyCode::Backspace => app.canvas_time_backspace(),
-                            KeyCode::Left      => app.canvas_time_move_cursor(-1),
-                            KeyCode::Right     => app.canvas_time_move_cursor(1),
-                            KeyCode::Char(c)   => app.canvas_time_char(c),
                             _ => {}
                         }
                     }
@@ -312,6 +469,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('s'))  => app.canvas_start_status_tagging(),
                             (KeyModifiers::NONE, KeyCode::Char('t'))  => app.canvas_start_time_tagging(),
                             (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
+                            (KeyModifiers::NONE, KeyCode::Char(' '))  => app.mode = Mode::ContextSwitcher { selected: 0, previous: Box::new(app.mode.clone()) },
                             (KeyModifiers::NONE, KeyCode::Char('u'))  => app.undo(),
                             (KeyModifiers::NONE, KeyCode::Char('?'))  => app.canvas_start_help(),
                             (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
