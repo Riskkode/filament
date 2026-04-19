@@ -71,6 +71,8 @@ pub enum CanvasState {
     TagStatus,
     /// Time tagging chord waiting for next key.
     TagTime,
+    /// Time tagging clear chord waiting for next key.
+    TagTimeClear,
     /// Time tagging: user is typing the date/time string.
     TimeInput { time_type: String, buf: String, cursor: usize },
     /// Quick jump to node by name.

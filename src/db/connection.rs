@@ -54,12 +54,22 @@ pub fn open(path: &Path) -> Result<Connection> {
         );
 
         CREATE TABLE IF NOT EXISTS node_times (
-            node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-            time_type  TEXT NOT NULL,
-            time_value INTEGER NOT NULL,
+            node_id      INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            time_type    TEXT NOT NULL,
+            time_value   INTEGER NOT NULL,
+            time_pattern TEXT,
             PRIMARY KEY (node_id, time_type)
         );
     ")?;
+
+    // Migration: Add time_pattern column if it doesn't exist.
+    let has_pattern: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('node_times') WHERE name='time_pattern'", 
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if has_pattern == 0 {
+        let _ = conn.execute("ALTER TABLE node_times ADD COLUMN time_pattern TEXT", []);
+    }
 
     Ok(conn)
 }

@@ -1,4 +1,4 @@
-use crate::models::node::Node;
+use crate::models::node::{Node, TimeTag};
 use rusqlite::{Connection, Result, params};
 use std::collections::HashMap;
 
@@ -93,14 +93,14 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
     }
 
     // Load times.
-    let mut time_stmt = conn.prepare("SELECT node_id, time_type, time_value FROM node_times")?;
-    let times_list: Vec<(i64, String, i64)> = time_stmt.query_map([], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    let mut time_stmt = conn.prepare("SELECT node_id, time_type, time_value, time_pattern FROM node_times")?;
+    let times_list: Vec<(i64, String, i64, Option<String>)> = time_stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
     })?.collect::<Result<_>>()?;
 
-    for (node_id, key, value) in times_list {
+    for (node_id, key, value, pattern) in times_list {
         if let Some(&idx) = id_to_idx.get(&node_id) {
-            nodes[idx].times.insert(key, value);
+            nodes[idx].times.insert(key, TimeTag { timestamp: value, pattern });
         }
     }
 
@@ -159,8 +159,8 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
 
         for (key, value) in &node.times {
             tx.execute(
-                "INSERT INTO node_times (node_id, time_type, time_value) VALUES (?1, ?2, ?3)",
-                params![idx_to_id[i], key, value],
+                "INSERT INTO node_times (node_id, time_type, time_value, time_pattern) VALUES (?1, ?2, ?3, ?4)",
+                params![idx_to_id[i], key, value.timestamp, value.pattern],
             )?;
         }
     }

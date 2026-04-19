@@ -1,5 +1,5 @@
 use super::{App, CanvasState, InputAction, Mode, move_cursor_in_buf};
-use crate::models::node::Node;
+use crate::models::node::{Node, TimeTag};
 use std::collections::HashMap;
 use chrono::{Local, Utc};
 use chrono_english::{parse_date_string, Dialect};
@@ -223,12 +223,31 @@ impl App {
         }
 
         let now = Local::now();
+        
+        let parse_buf = if time_type == "recurring" {
+            buf.to_lowercase().replace("every", "next")
+        } else {
+            buf.clone()
+        };
+
         // chrono-english::parse_date_string parses relative dates like "tomorrow"
-        match parse_date_string(&buf, now, Dialect::Uk) {
+        match parse_date_string(&parse_buf, now, Dialect::Uk) {
             Ok(dt) => {
                 let id = self.selected;
                 self.push_undo();
-                self.nodes[id].times.insert(time_type, dt.with_timezone(&Utc).timestamp());
+                let timestamp = if time_type == "duration" {
+                    dt.timestamp() - now.timestamp()
+                } else {
+                    dt.with_timezone(&Utc).timestamp()
+                };
+                
+                let pattern = if time_type == "recurring" {
+                    Some(buf.clone())
+                } else {
+                    None
+                };
+
+                self.nodes[id].times.insert(time_type, TimeTag { timestamp, pattern });
                 self.mode = Mode::Canvas { state: CanvasState::Browse };
                 self.save_project();
             }

@@ -164,7 +164,7 @@ fn main() -> io::Result<()> {
                             _ => {}
                         }
                     }
-                    // TagTime sub-state: wait for d, s, e, c, u
+                    // TagTime sub-state: wait for d, s, e, c, u, r
                     else if let CanvasState::TagTime = cs {
                         match key.code {
                             KeyCode::Char('d') => app.canvas_start_time_input("deadline"),
@@ -172,8 +172,23 @@ fn main() -> io::Result<()> {
                             KeyCode::Char('e') => app.canvas_start_time_input("end"),
                             KeyCode::Char('c') => app.canvas_start_time_input("checkpoint"),
                             KeyCode::Char('u') => app.canvas_start_time_input("duration"),
-                            KeyCode::Char('x') => app.canvas_set_time(None),
+                            KeyCode::Char('r') => app.canvas_start_time_input("recurring"),
+                            KeyCode::Char('x') => app.mode = Mode::Canvas { state: CanvasState::TagTimeClear },
                             KeyCode::Char('t') | KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Browse },
+                            _ => {}
+                        }
+                    }
+                    // TagTimeClear sub-state: wait for d, s, e, c, u, r, a (all)
+                    else if let CanvasState::TagTimeClear = cs {
+                        match key.code {
+                            KeyCode::Char('d') => app.canvas_set_time(Some("deadline")),
+                            KeyCode::Char('s') => app.canvas_set_time(Some("start")),
+                            KeyCode::Char('e') => app.canvas_set_time(Some("end")),
+                            KeyCode::Char('c') => app.canvas_set_time(Some("checkpoint")),
+                            KeyCode::Char('u') => app.canvas_set_time(Some("duration")),
+                            KeyCode::Char('r') => app.canvas_set_time(Some("recurring")),
+                            KeyCode::Char('a') | KeyCode::Char('x') => app.canvas_set_time(None),
+                            KeyCode::Esc       => app.mode = Mode::Canvas { state: CanvasState::TagTime },
                             _ => {}
                         }
                     }

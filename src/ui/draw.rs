@@ -15,6 +15,25 @@ use std::collections::HashSet;
 use std::io;
 use chrono::{Local, TimeZone};
 
+fn format_duration(seconds: i64) -> String {
+    let mut s = seconds.abs();
+    let days = s / 86400;
+    s %= 86400;
+    let hours = s / 3600;
+    s %= 3600;
+    let minutes = s / 60;
+    let secs = s % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 { parts.push(format!("{}d", days)); }
+    if hours > 0 { parts.push(format!("{}h", hours)); }
+    if minutes > 0 { parts.push(format!("{}m", minutes)); }
+    if secs > 0 || parts.is_empty() { parts.push(format!("{}s", secs)); }
+    
+    let joined = parts.join(" ");
+    if seconds < 0 { format!("-{}", joined) } else { joined }
+}
+
 pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     if matches!(&app.mode, Mode::StartMenu { .. }) {
         return draw_start_menu(terminal, app);
@@ -201,10 +220,19 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let mut time_keys: Vec<_> = node.times.keys().cloned().collect();
             time_keys.sort();
             for key in time_keys {
-                if let Some(&ts) = node.times.get(&key) {
-                    let dt = Local.timestamp_opt(ts, 0).unwrap();
-                    let date_str = dt.format("%Y-%m-%d").to_string();
-                    spans.push(Span::styled(format!(" [{}: {}]", key, date_str), Style::default().fg(app.palette.dim)));
+                if let Some(tag) = node.times.get(&key) {
+                    let val_str = if key == "duration" {
+                        format_duration(tag.timestamp)
+                    } else {
+                        let dt = Local.timestamp_opt(tag.timestamp, 0).unwrap();
+                        let date_str = dt.format("%Y-%m-%d").to_string();
+                        if let Some(ref pattern) = tag.pattern {
+                            format!("{} ({})", date_str, pattern)
+                        } else {
+                            date_str
+                        }
+                    };
+                    spans.push(Span::styled(format!(" [{}: {}]", key, val_str), Style::default().fg(app.palette.dim)));
                 }
             }
 
@@ -212,8 +240,8 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 Paragraph::new(Line::from(spans)),
                 Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
             );
+            }
 
-        }
 
         // ── Canvas cursor ─────────────────────────────────────────────────────
         if let Mode::Canvas { ref state } = app.mode {
@@ -513,7 +541,9 @@ fn build_status(app: &App) -> String {
         Mode::Canvas { state: CanvasState::TagStatus } =>
             " status tag │ t:todo  p:progress  c:done  b:blocked  x:clear  Esc:cancel ".to_string(),
         Mode::Canvas { state: CanvasState::TagTime } =>
-            " time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  x:clear  Esc:cancel ".to_string(),
+            " time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  x:clear...  Esc:cancel ".to_string(),
+        Mode::Canvas { state: CanvasState::TagTimeClear } =>
+            " clear time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back ".to_string(),
         Mode::Canvas { state: CanvasState::TimeInput { time_type, buf, .. } } =>
             format!(" enter {} │ \"{}\" ", time_type, buf),
         Mode::Help =>

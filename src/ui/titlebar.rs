@@ -18,6 +18,7 @@ fn mode_color(pal: &Palette, mode: &Mode) -> Color {
         Mode::Canvas { state: CanvasState::Link { .. } }              => pal.link,
         Mode::Canvas { state: CanvasState::TagStatus }                => pal.edit,
         Mode::Canvas { state: CanvasState::TagTime }                  => pal.edit,
+        Mode::Canvas { state: CanvasState::TagTimeClear }             => pal.edit,
         Mode::Canvas { state: CanvasState::TimeInput { .. } }          => pal.edit,
         Mode::Canvas { .. }                                            => pal.canvas,
         Mode::Help                                                     => pal.pick,
@@ -76,7 +77,11 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
         ),
         Mode::Canvas { state: CanvasState::TagTime } => modal_title(
             pal, "TIME", pal.edit,
-            "d:deadline  s:start  e:end  c:checkpoint  u:duration  x:clear  Esc:cancel".to_string(),
+            "d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  x:clear...  Esc:cancel".to_string(),
+        ),
+        Mode::Canvas { state: CanvasState::TagTimeClear } => modal_title(
+            pal, "TIME › CLEAR", pal.edit,
+            "d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back".to_string(),
         ),
         Mode::Canvas { state: CanvasState::TimeInput { time_type, .. } } => modal_title(
             pal, "TIME INPUT", pal.edit,

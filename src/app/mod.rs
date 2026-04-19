@@ -14,6 +14,7 @@ use crate::persistence::settings::GlobalSettings;
 use crate::ui::palette::{Palette, get_palette};
 use std::path::PathBuf;
 use std::collections::{HashSet, HashMap};
+use chrono::{Local, Utc};
 
 pub struct App {
     pub arrow:    ArrowSettings,
@@ -444,6 +445,24 @@ impl App {
     // ── Layout ────────────────────────────────────────────────────────────────
 
     pub fn recompute_layout(&mut self) -> Vec<(usize, usize)> {
+        // Auto-advance recurring tags
+        let now = Local::now();
+        let mut changed = false;
+        for node in self.nodes.iter_mut() {
+            for tag in node.times.values_mut() {
+                if let Some(ref pattern) = tag.pattern {
+                    if tag.timestamp < now.timestamp() {
+                        let parse_buf = pattern.to_lowercase().replace("every", "next");
+                        if let Ok(dt) = chrono_english::parse_date_string(&parse_buf, now, chrono_english::Dialect::Uk) {
+                            tag.timestamp = dt.with_timezone(&Utc).timestamp();
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed { self.save_project(); }
+
         for n in self.nodes.iter_mut() { n.row = usize::MAX; }
         let mut order: Vec<(usize, usize)> = Vec::new();
 
@@ -497,8 +516,12 @@ impl App {
                 if self.nodes[id].tags.contains_key("status") {
                     decoration_cols += 2;
                 }
-                for (key, _) in &self.nodes[id].times {
-                    decoration_cols += 4 + key.chars().count() as i32 + 10; // " [key: YYYY-MM-DD]"
+                for (key, tag) in &self.nodes[id].times {
+                    let mut val_width = if key == "duration" { 15 } else { 10 };
+                    if let Some(ref pattern) = tag.pattern {
+                        val_width += 3 + pattern.chars().count() as i32; // " (pattern)"
+                    }
+                    decoration_cols += 4 + key.chars().count() as i32 + val_width; // " [key: value]"
                 }
                 self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + decoration_cols;
             }

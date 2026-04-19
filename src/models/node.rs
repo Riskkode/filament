@@ -2,6 +2,12 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct TimeTag {
+    pub timestamp: i64,
+    pub pattern:   Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Node {
     pub label:     String,
     pub parent:    Option<usize>,
@@ -21,6 +27,6 @@ pub struct Node {
     pub world_x_end: i32,
     /// Key-value metadata tags (e.g., "status" => "todo").
     pub tags:      HashMap<String, String>,
-    /// Time tags (e.g., "deadline" => epoch_seconds).
-    pub times:     HashMap<String, i64>,
+    /// Time tags (e.g., "deadline" => TimeTag).
+    pub times:     HashMap<String, TimeTag>,
 }
