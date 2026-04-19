@@ -67,6 +67,12 @@ impl App {
                             None    => return,
                         };
                         self.load_project(&path);
+                    } else if self.nodes[parent].label.to_lowercase().contains("themes") {
+                        let theme_name = self.nodes[node_id].label.trim_start_matches("• ").to_string();
+                        self.settings.palette = theme_name.clone();
+                        self.palette = crate::ui::palette::get_palette(&theme_name);
+                        let _ = self.settings.save();
+                        self.init_main_menu_nodes();
                     }
                 }
             }

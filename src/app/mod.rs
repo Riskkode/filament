@@ -11,6 +11,7 @@ use crate::models::node::Node;
 use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
+use crate::ui::palette::{Palette, get_palette};
 use std::path::PathBuf;
 use std::collections::{HashSet, HashMap};
 
@@ -38,6 +39,7 @@ pub struct App {
     pub registry: Registry,
     /// Global application settings.
     pub settings: GlobalSettings,
+    pub palette:  Palette,
     /// Transient message shown in the status bar (errors, hints).
     pub status_message: Option<String>,
     /// Stack of previous node states for undo.
@@ -51,6 +53,8 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        let settings = GlobalSettings::load();
+        let palette = get_palette(&settings.palette);
         let mut app = Self {
             arrow:    ArrowSettings::default(),
             nodes:    vec![],
@@ -64,7 +68,8 @@ impl App {
             project_name:       String::new(),
             project_created_at: 0,
             registry:           Registry::load(),
-            settings:           GlobalSettings::load(),
+            settings,
+            palette,
             status_message:     None,
             undo_stack:         vec![],
             last_link_origin:   None,
@@ -357,6 +362,44 @@ impl App {
             tags: HashMap::new(),
         });
         self.nodes[settings_idx].children.push(user_idx);
+
+        // Themes
+        let themes_idx = self.nodes.len();
+        self.nodes.push(Node {
+            label: "🎨 Themes".to_string(),
+            parent: Some(settings_idx),
+            children: vec![],
+            links: vec![],
+            collapsed: true,
+            row: themes_idx,
+            world_x: 0,
+            world_y: themes_idx as i32,
+            world_x_end: 0,
+            tags: HashMap::new(),
+        });
+        self.nodes[settings_idx].children.push(themes_idx);
+
+        for palette in crate::ui::palette::load_all() {
+            let p_idx = self.nodes.len();
+            let label = if palette.name == self.settings.palette {
+                format!("• {}", palette.name)
+            } else {
+                palette.name.clone()
+            };
+            self.nodes.push(Node {
+                label,
+                parent: Some(themes_idx),
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: p_idx,
+                world_x: 0,
+                world_y: p_idx as i32,
+                world_x_end: 0,
+                tags: HashMap::new(),
+            });
+            self.nodes[themes_idx].children.push(p_idx);
+        }
 
         // 5. Root: Help
         self.nodes.push(Node {

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub struct GlobalSettings {
     pub default_projects_path: String,
     pub username: String,
+    pub palette: String,
 }
 
 impl Default for GlobalSettings {
@@ -12,6 +13,7 @@ impl Default for GlobalSettings {
         Self {
             default_projects_path: "~/Documents/filaments".to_string(),
             username: "user".to_string(),
+            palette: "dracula".to_string(),
         }
     }
 }

@@ -1,95 +1,95 @@
 use crate::app::{CanvasState, InputAction, Mode, StartMenuState};
-use crate::ui::palette as pal;
+use crate::ui::palette::Palette;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 /// Border style for the outer frame — coloured to match the active mode.
-pub fn border_style(mode: &Mode) -> Style {
-    Style::default().fg(mode_color(mode))
+pub fn border_style(pal: &Palette, mode: &Mode) -> Style {
+    Style::default().fg(mode_color(pal, mode))
 }
 
-fn mode_color(mode: &Mode) -> Color {
+fn mode_color(pal: &Palette, mode: &Mode) -> Color {
     match mode {
-        Mode::StartMenu { .. }                                         => pal::CANVAS,
-        Mode::Input { action: InputAction::InsertChild { .. }, .. }    => pal::INSERT,
-        Mode::Input { .. }                                             => pal::EDIT,
-        Mode::Reparent { .. }                                          => pal::REPARENT,
-        Mode::Canvas { state: CanvasState::Pick { .. } }              => pal::PICK,
-        Mode::Canvas { state: CanvasState::Link { .. } }              => pal::LINK,
-        Mode::Canvas { state: CanvasState::TagStatus }                => pal::EDIT,
-        Mode::Canvas { .. }                                            => pal::CANVAS,
-        Mode::Help                                                     => pal::PICK,
+        Mode::StartMenu { .. }                                         => pal.canvas,
+        Mode::Input { action: InputAction::InsertChild { .. }, .. }    => pal.insert,
+        Mode::Input { .. }                                             => pal.edit,
+        Mode::Reparent { .. }                                          => pal.reparent,
+        Mode::Canvas { state: CanvasState::Pick { .. } }              => pal.pick,
+        Mode::Canvas { state: CanvasState::Link { .. } }              => pal.link,
+        Mode::Canvas { state: CanvasState::TagStatus }                => pal.edit,
+        Mode::Canvas { .. }                                            => pal.canvas,
+        Mode::Help                                                     => pal.pick,
     }
 }
 
 /// Title line rendered inside the top border of the outer frame.
-pub fn build_title(mode: &Mode) -> Line<'_> {
+pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
     match mode {
-        Mode::StartMenu { state: StartMenuState::Main { .. } } => start_menu_title(),
+        Mode::StartMenu { state: StartMenuState::Main { .. } } => start_menu_title(pal),
         Mode::StartMenu { state: StartMenuState::NewPath { .. } } => modal_title(
-            "NEW PROJECT", pal::INSERT,
+            pal, "NEW PROJECT", pal.insert,
             "enter directory path  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::StartMenu { state: StartMenuState::NewName { .. } } => modal_title(
-            "NEW PROJECT", pal::INSERT,
+            pal, "NEW PROJECT", pal.insert,
             "enter project name  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::StartMenu { state: StartMenuState::EditSetting { key, .. } } => modal_title(
-            "SETTINGS", pal::EDIT,
+            pal, "SETTINGS", pal.edit,
             format!("edit {}  Enter:confirm  Esc:cancel", key.replace('_', " ")),
         ),
         Mode::StartMenu { state: StartMenuState::Import { .. } } => modal_title(
-            "IMPORT", pal::INSERT,
+            pal, "IMPORT", pal.insert,
             "type to fuzzy search  ↑↓:nav  Tab:change location  Enter:import  Esc:cancel".to_string(),
         ),
-        Mode::Canvas { state: CanvasState::Browse } => canvas_title(),
+        Mode::Canvas { state: CanvasState::Browse } => canvas_title(pal),
 
         Mode::Input { action: InputAction::InsertChild { .. }, .. } => modal_title(
-            "INSERT", pal::INSERT,
+            pal, "INSERT", pal.insert,
             "Enter:add  Tab:indent  ⇧Tab:dedent  ←→:cursor  Esc:done".to_string(),
         ),
         Mode::Input { .. } => modal_title(
-            "EDIT", pal::EDIT,
+            pal, "EDIT", pal.edit,
             "←→:cursor  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::Reparent { .. } => modal_title(
-            "REPARENT", pal::REPARENT,
+            pal, "REPARENT", pal.reparent,
             "hjkl:navigate  v/↵:confirm  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::New { .. } } => modal_title(
-            "NEW NODE", pal::INSERT,
+            pal, "NEW NODE", pal.insert,
             "type name  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Pick { .. } } => modal_title(
-            "PICK", pal::PICK,
+            pal, "PICK", pal.pick,
             "hjkl:move  p:place  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Link { .. } } => modal_title(
-            "LINK", pal::LINK,
+            pal, "LINK", pal.link,
             "hjkl:navigate  Enter:toggle link  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::TagStatus } => modal_title(
-            "STATUS", pal::EDIT,
+            pal, "STATUS", pal.edit,
             "t:todo  p:in progress  c:done  b:blocked  x:clear  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Goto { .. } } => modal_title(
-            "GOTO", pal::EDIT,
+            pal, "GOTO", pal.edit,
             "type to search  Tab:next match  Enter:jump  Esc:cancel".to_string(),
         ),
         Mode::Canvas { state: CanvasState::Menu } => modal_title(
-            "ARROWS", pal::CANVAS,
+            pal, "ARROWS", pal.canvas,
             "i:incoming  o:outgoing  g:global  F/Esc:close".to_string(),
         ),
         Mode::Canvas { state: CanvasState::MenuIncoming } => modal_title(
-            "ARROWS › INCOMING", pal::CANVAS,
+            pal, "ARROWS › INCOMING", pal.canvas,
             "T:tree  S:selected  Esc:back".to_string(),
         ),
         Mode::Canvas { state: CanvasState::MenuOutgoing } => modal_title(
-            "ARROWS › OUTGOING", pal::CANVAS,
+            pal, "ARROWS › OUTGOING", pal.canvas,
             "T:tree  S:selected  Esc:back".to_string(),
         ),
         Mode::Help => modal_title(
-            "HELP", pal::PICK,
+            pal, "HELP", pal.pick,
             "hjkl:navigate  Esc:close".to_string(),
         ),
     }
@@ -97,36 +97,36 @@ pub fn build_title(mode: &Mode) -> Line<'_> {
 
 // ── Builders ──────────────────────────────────────────────────────────────────
 
-fn start_menu_title() -> Line<'static> {
+fn start_menu_title(pal: &Palette) -> Line<'static> {
     Line::from(vec![
         Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
         sep(),
-        Span::styled("Welcome ", Style::default().fg(pal::CANVAS)),
+        Span::styled("Welcome ", Style::default().fg(pal.canvas)),
     ])
 }
 
 /// Canvas (ground state): mode triggers + command keys.
-fn canvas_title() -> Line<'static> {
+fn canvas_title(pal: &Palette) -> Line<'static> {
     Line::from(vec![
         Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
         sep(),
         // ── Mode triggers ────────────────────────────────────────────────────
-        bracket("i",   pal::INSERT),   Span::styled(" ins  ",     pal::tinted(pal::INSERT)),
-        bracket("e/E", pal::EDIT),     Span::styled(" edit  ",    pal::tinted(pal::EDIT)),
-        bracket("v",   pal::REPARENT), Span::styled(" move  ",    pal::tinted(pal::REPARENT)),
-        bracket("p",   pal::PICK),     Span::styled(" pick  ",    pal::tinted(pal::PICK)),
-        bracket("f",   pal::LINK),     Span::styled(" link  ",    pal::tinted(pal::LINK)),
-        bracket("s",   pal::EDIT),     Span::styled(" status  ",  pal::tinted(pal::EDIT)),
-        bracket("g",   pal::EDIT),     Span::styled(" goto  ",    pal::tinted(pal::EDIT)),
-        bracket("?",   pal::PICK),     Span::styled(" help",      pal::tinted(pal::PICK)),
+        bracket(pal, "i",   pal.insert),   Span::styled(" ins  ",     pal.tinted(pal.insert)),
+        bracket(pal, "e/E", pal.edit),     Span::styled(" edit  ",    pal.tinted(pal.edit)),
+        bracket(pal, "v",   pal.reparent), Span::styled(" move  ",    pal.tinted(pal.reparent)),
+        bracket(pal, "p",   pal.pick),     Span::styled(" pick  ",    pal.tinted(pal.pick)),
+        bracket(pal, "f",   pal.link),     Span::styled(" link  ",    pal.tinted(pal.link)),
+        bracket(pal, "s",   pal.edit),     Span::styled(" status  ",  pal.tinted(pal.edit)),
+        bracket(pal, "g",   pal.edit),     Span::styled(" goto  ",    pal.tinted(pal.edit)),
+        bracket(pal, "?",   pal.pick),     Span::styled(" help",      pal.tinted(pal.pick)),
     ])
 }
 
 /// Modal mode: coloured mode name + muted hint string.
-fn modal_title(name: &'static str, color: Color, hints: String) -> Line<'static> {
+fn modal_title(pal: &Palette, name: &'static str, color: Color, hints: String) -> Line<'static> {
     Line::from(vec![
         Span::raw(" "),
-        Span::styled(name, pal::tinted_bold(color)),
+        Span::styled(name, pal.tinted_bold(color)),
         sep(),
         Span::styled(hints, Style::default().fg(Color::DarkGray)),
         Span::raw(" "),
@@ -134,10 +134,10 @@ fn modal_title(name: &'static str, color: Color, hints: String) -> Line<'static>
 }
 
 /// Coloured `[key]` indicator.
-fn bracket(key: &'static str, color: Color) -> Span<'static> {
+fn bracket(pal: &Palette, key: &'static str, color: Color) -> Span<'static> {
     Span::styled(
         format!("[{key}]"),
-        pal::tinted_bold(color),
+        pal.tinted_bold(color),
     )
 }
 
