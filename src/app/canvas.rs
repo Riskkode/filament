@@ -1,6 +1,8 @@
-use super::{App, CanvasState, InputAction, Mode};
+use super::{App, CanvasState, InputAction, Mode, move_cursor_in_buf};
 use crate::models::node::Node;
 use std::collections::HashMap;
+use chrono::{Local, Utc};
+use chrono_english::{parse_date_string, Dialect};
 
 impl App {
     // ── Sub-state transitions ─────────────────────────────────────────────────
@@ -124,6 +126,7 @@ impl App {
                 collapsed: false, row: usize::MAX,
                 world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
                 tags: HashMap::new(),
+                times: HashMap::new(),
             });
             self.selected = id;
             // Chain straight into insert-child so editing continues normally.
@@ -164,6 +167,97 @@ impl App {
             self.nodes[id].tags.insert("status".to_string(), s.to_string());
         } else {
             self.nodes[id].tags.remove("status");
+        }
+        self.mode = Mode::Canvas { state: CanvasState::Browse };
+        self.save_project();
+    }
+
+    /// `t` — enter Time Tagging state from the currently selected node.
+    pub fn canvas_start_time_tagging(&mut self) {
+        if !self.has_selection() { return; }
+        self.mode = Mode::Canvas { state: CanvasState::TagTime };
+    }
+
+    pub fn canvas_start_time_input(&mut self, time_type: &str) {
+        self.mode = Mode::Canvas { 
+            state: CanvasState::TimeInput { 
+                time_type: time_type.to_string(), 
+                buf: String::new(), 
+                cursor: 0 
+            } 
+        };
+    }
+
+    pub fn canvas_time_char(&mut self, c: char) {
+        if let Mode::Canvas { state: CanvasState::TimeInput { ref mut buf, ref mut cursor, .. } } = self.mode {
+            buf.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+    }
+
+    pub fn canvas_time_backspace(&mut self) {
+        if let Mode::Canvas { state: CanvasState::TimeInput { ref mut buf, ref mut cursor, .. } } = self.mode {
+            if *cursor > 0 {
+                let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                buf.drain(prev..*cursor);
+                *cursor = prev;
+            }
+        }
+    }
+
+    pub fn canvas_time_move_cursor(&mut self, delta: i32) {
+        if let Mode::Canvas { state: CanvasState::TimeInput { ref buf, ref mut cursor, .. } } = self.mode {
+            move_cursor_in_buf(buf, cursor, delta);
+        }
+    }
+
+    pub fn canvas_confirm_time(&mut self) {
+        let (time_type, buf) = match &self.mode {
+            Mode::Canvas { state: CanvasState::TimeInput { time_type, buf, .. } } => (time_type.clone(), buf.clone()),
+            _ => return,
+        };
+
+        if !self.has_selection() {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+            return;
+        }
+
+        let now = Local::now();
+        // chrono-english::parse_date_string parses relative dates like "tomorrow"
+        match parse_date_string(&buf, now, Dialect::Uk) {
+            Ok(dt) => {
+                let id = self.selected;
+                self.push_undo();
+                self.nodes[id].times.insert(time_type, dt.with_timezone(&Utc).timestamp());
+                self.mode = Mode::Canvas { state: CanvasState::Browse };
+                self.save_project();
+            }
+            Err(_) => {
+                self.status_message = Some("Invalid date/time format".to_string());
+            }
+        }
+    }
+
+    pub fn canvas_set_time(&mut self, time_type: Option<&str>) {
+        if !self.has_selection() {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+            return;
+        }
+        let id = self.selected;
+        self.push_undo();
+        if let Some(t) = time_type {
+            // This is actually for the 'x' clear logic if we want it general, 
+            // but the plan said 'x' clears the status in TagStatus. 
+            // In TagTime 'x' should probably clear the specific time tag? 
+            // Let's implement clearing.
+            self.nodes[id].times.remove(t);
+        } else {
+            // Clear ALL time tags? Or just go back?
+            // The main loop calls app.canvas_set_time(None) for 'x'.
+            // Let's make 'x' enter a 'Clear' mode or just clear all for now.
+            // Actually, the plan for 'TagTime' 'x' was 'app.canvas_set_time(None)'.
+            // I'll make it clear all time tags on the node.
+            self.nodes[id].times.clear();
         }
         self.mode = Mode::Canvas { state: CanvasState::Browse };
         self.save_project();
@@ -361,6 +455,7 @@ impl App {
                 world_y: 0,
                 world_x_end: 0,
                 tags: HashMap::new(),
+                times: HashMap::new(),
             });
             if let Some(p) = parent { nodes[p].children.push(id); }
             id

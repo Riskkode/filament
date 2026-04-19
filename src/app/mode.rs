@@ -69,6 +69,10 @@ pub enum CanvasState {
     Link { origin_id: usize },
     /// Status tagging chord waiting for next key.
     TagStatus,
+    /// Time tagging chord waiting for next key.
+    TagTime,
+    /// Time tagging: user is typing the date/time string.
+    TimeInput { time_type: String, buf: String, cursor: usize },
     /// Quick jump to node by name.
     Goto { buf: String, cursor: usize, matches: Vec<usize>, match_idx: usize, previous: Box<CanvasState> },
     /// Arrow-display settings menu open — waiting for i / o / g / F / Esc.

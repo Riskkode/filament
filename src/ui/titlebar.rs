@@ -17,6 +17,8 @@ fn mode_color(pal: &Palette, mode: &Mode) -> Color {
         Mode::Canvas { state: CanvasState::Pick { .. } }              => pal.pick,
         Mode::Canvas { state: CanvasState::Link { .. } }              => pal.link,
         Mode::Canvas { state: CanvasState::TagStatus }                => pal.edit,
+        Mode::Canvas { state: CanvasState::TagTime }                  => pal.edit,
+        Mode::Canvas { state: CanvasState::TimeInput { .. } }          => pal.edit,
         Mode::Canvas { .. }                                            => pal.canvas,
         Mode::Help                                                     => pal.pick,
     }
@@ -72,6 +74,14 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
             pal, "STATUS", pal.edit,
             "t:todo  p:in progress  c:done  b:blocked  x:clear  Esc:cancel".to_string(),
         ),
+        Mode::Canvas { state: CanvasState::TagTime } => modal_title(
+            pal, "TIME", pal.edit,
+            "d:deadline  s:start  e:end  c:checkpoint  u:duration  x:clear  Esc:cancel".to_string(),
+        ),
+        Mode::Canvas { state: CanvasState::TimeInput { time_type, .. } } => modal_title(
+            pal, "TIME INPUT", pal.edit,
+            format!("enter {}: tomorrow, friday, 2024-12-01  Enter:confirm  Esc:cancel", time_type),
+        ),
         Mode::Canvas { state: CanvasState::Goto { .. } } => modal_title(
             pal, "GOTO", pal.edit,
             "type to search  Tab:next match  Enter:jump  Esc:cancel".to_string(),
@@ -117,6 +127,7 @@ fn canvas_title(pal: &Palette) -> Line<'static> {
         bracket(pal, "p",   pal.pick),     Span::styled(" pick  ",    pal.tinted(pal.pick)),
         bracket(pal, "f",   pal.link),     Span::styled(" link  ",    pal.tinted(pal.link)),
         bracket(pal, "s",   pal.edit),     Span::styled(" status  ",  pal.tinted(pal.edit)),
+        bracket(pal, "t",   pal.edit),     Span::styled(" time  ",    pal.tinted(pal.edit)),
         bracket(pal, "g",   pal.edit),     Span::styled(" goto  ",    pal.tinted(pal.edit)),
         bracket(pal, "?",   pal.pick),     Span::styled(" help",      pal.tinted(pal.pick)),
     ])

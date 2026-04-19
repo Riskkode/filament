@@ -52,6 +52,13 @@ pub fn open(path: &Path) -> Result<Connection> {
             tag_value  TEXT NOT NULL,
             PRIMARY KEY (node_id, tag_key)
         );
+
+        CREATE TABLE IF NOT EXISTS node_times (
+            node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            time_type  TEXT NOT NULL,
+            time_value INTEGER NOT NULL,
+            PRIMARY KEY (node_id, time_type)
+        );
     ")?;
 
     Ok(conn)

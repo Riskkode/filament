@@ -254,6 +254,7 @@ impl App {
             world_y: 0,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
 
         // Add projects as children of "Open"
@@ -271,6 +272,7 @@ impl App {
                 world_y: (i + 1) as i32,
                 world_x_end: 0,
                 tags: HashMap::new(),
+                times: HashMap::new(),
             });
             self.nodes[open_idx].children.push(child_idx);
         }
@@ -287,6 +289,7 @@ impl App {
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
 
         // 3. Root: Import
@@ -301,6 +304,7 @@ impl App {
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
 
         // 4. Root: Find
@@ -315,6 +319,7 @@ impl App {
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
 
         // 4. Root: Settings
@@ -330,6 +335,7 @@ impl App {
             world_y: settings_idx as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
         
         // Add specific settings as children of "Settings"
@@ -345,6 +351,7 @@ impl App {
             world_y: path_idx as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
         self.nodes[settings_idx].children.push(path_idx);
 
@@ -360,6 +367,7 @@ impl App {
             world_y: user_idx as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
         self.nodes[settings_idx].children.push(user_idx);
 
@@ -376,6 +384,7 @@ impl App {
             world_y: themes_idx as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
         self.nodes[settings_idx].children.push(themes_idx);
 
@@ -397,6 +406,7 @@ impl App {
                 world_y: p_idx as i32,
                 world_x_end: 0,
                 tags: HashMap::new(),
+                times: HashMap::new(),
             });
             self.nodes[themes_idx].children.push(p_idx);
         }
@@ -413,6 +423,7 @@ impl App {
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
     }
 
@@ -485,6 +496,9 @@ impl App {
                 }
                 if self.nodes[id].tags.contains_key("status") {
                     decoration_cols += 2;
+                }
+                for (key, _) in &self.nodes[id].times {
+                    decoration_cols += 4 + key.chars().count() as i32 + 10; // " [key: YYYY-MM-DD]"
                 }
                 self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + decoration_cols;
             }
@@ -691,6 +705,7 @@ mod tests {
                 world_y: 5,
                 world_x_end: 30,
                 tags: HashMap::new(),
+                times: HashMap::new(),
             }
         ];
 
@@ -725,6 +740,7 @@ mod tests {
             world_y: 5,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
         app.nodes.push(Node {
             label: "Child".to_string(),
@@ -737,6 +753,7 @@ mod tests {
             world_y: 0,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
 
         app.recompute_layout();
@@ -748,6 +765,20 @@ mod tests {
         // suffix_cols = 5 + "1".len() = 6
         // world_x_end = 10 + 2 + 4 + 6 = 22
         assert_eq!(app.nodes[root].world_x_end, 22);
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+pub(crate) fn move_cursor_in_buf(buf: &str, cursor: &mut usize, delta: i32) {
+    if delta < 0 {
+        if *cursor > 0 {
+            let ch = buf[..*cursor].chars().last().unwrap();
+            *cursor -= ch.len_utf8();
+        }
+    } else if *cursor < buf.len() {
+        let ch = buf[*cursor..].chars().next().unwrap();
+        *cursor += ch.len_utf8();
     }
 }
 

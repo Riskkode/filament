@@ -21,4 +21,6 @@ pub struct Node {
     pub world_x_end: i32,
     /// Key-value metadata tags (e.g., "status" => "todo").
     pub tags:      HashMap<String, String>,
+    /// Time tags (e.g., "deadline" => epoch_seconds).
+    pub times:     HashMap<String, i64>,
 }

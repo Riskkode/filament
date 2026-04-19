@@ -1,4 +1,4 @@
-use super::{App, Mode};
+use super::{App, Mode, move_cursor_in_buf};
 use super::mode::StartMenuState;
 use crate::models::node::Node;
 use std::collections::HashMap;
@@ -294,6 +294,7 @@ impl App {
             world_y: 0,
             world_x_end: 0,
             tags: HashMap::new(),
+            times: HashMap::new(),
         });
         self.nodes[new_node_idx].children.push(child_idx);
         self.nodes[new_node_idx].collapsed = false;
@@ -478,19 +479,5 @@ impl App {
             }
             _ => {}
         }
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn move_cursor_in_buf(buf: &str, cursor: &mut usize, delta: i32) {
-    if delta < 0 {
-        if *cursor > 0 {
-            let ch = buf[..*cursor].chars().last().unwrap();
-            *cursor -= ch.len_utf8();
-        }
-    } else if *cursor < buf.len() {
-        let ch = buf[*cursor..].chars().next().unwrap();
-        *cursor += ch.len_utf8();
     }
 }

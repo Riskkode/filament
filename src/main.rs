@@ -164,6 +164,31 @@ fn main() -> io::Result<()> {
                             _ => {}
                         }
                     }
+                    // TagTime sub-state: wait for d, s, e, c, u
+                    else if let CanvasState::TagTime = cs {
+                        match key.code {
+                            KeyCode::Char('d') => app.canvas_start_time_input("deadline"),
+                            KeyCode::Char('s') => app.canvas_start_time_input("start"),
+                            KeyCode::Char('e') => app.canvas_start_time_input("end"),
+                            KeyCode::Char('c') => app.canvas_start_time_input("checkpoint"),
+                            KeyCode::Char('u') => app.canvas_start_time_input("duration"),
+                            KeyCode::Char('x') => app.canvas_set_time(None),
+                            KeyCode::Char('t') | KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Browse },
+                            _ => {}
+                        }
+                    }
+                    // TimeInput sub-state: type the date/duration
+                    else if let CanvasState::TimeInput { .. } = cs {
+                        match key.code {
+                            KeyCode::Enter     => app.canvas_confirm_time(),
+                            KeyCode::Esc       => app.mode = Mode::Canvas { state: CanvasState::TagTime },
+                            KeyCode::Backspace => app.canvas_time_backspace(),
+                            KeyCode::Left      => app.canvas_time_move_cursor(-1),
+                            KeyCode::Right     => app.canvas_time_move_cursor(1),
+                            KeyCode::Char(c)   => app.canvas_time_char(c),
+                            _ => {}
+                        }
+                    }
                     // New sub-state: all keystrokes go to the text buffer.
                     else if let CanvasState::New { .. } = cs {
                         match key.code {
@@ -270,6 +295,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('p'))  => { app.canvas_pick_or_place(); }
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
                             (KeyModifiers::NONE, KeyCode::Char('s'))  => app.canvas_start_status_tagging(),
+                            (KeyModifiers::NONE, KeyCode::Char('t'))  => app.canvas_start_time_tagging(),
                             (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
                             (KeyModifiers::NONE, KeyCode::Char('u'))  => app.undo(),
                             (KeyModifiers::NONE, KeyCode::Char('?'))  => app.canvas_start_help(),
