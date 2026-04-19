@@ -215,23 +215,23 @@ pub fn load_all() -> Vec<Palette> {
             },
             Palette {
             name:           "matte black".into(),
-            insert:         Color::Rgb(100, 100, 100),
-            edit:           Color::Rgb(180, 180, 180),
-            reparent:       Color::Rgb(120, 120, 120),
-            canvas:         Color::Rgb(140, 140, 140),
-            pick:           Color::Rgb(160, 160, 160),
-            link:           Color::Rgb(100, 100, 100),
-            link_arrow:     Color::Rgb(100, 100, 100),
-            arrow_dim:      Color::Rgb(50, 50, 50),
-            node:           Color::Rgb(140, 140, 140),
-            selected:       Color::Rgb(255, 255, 255),
-            prefix:         Color::Rgb(80, 80, 80),
-            dim:            Color::Rgb(60, 60, 60),
+            insert:         Color::Rgb(255, 193, 7),   // Amber (#FFC107)
+            edit:           Color::Rgb(230, 142, 13),  // Orange (#e68e0d)
+            reparent:       Color::Rgb(190, 190, 190), // Foreground (#bebebe)
+            canvas:         Color::Rgb(138, 138, 141), // Bright Black (#8a8a8d)
+            pick:           Color::Rgb(211, 95,  95),  // Red (#D35F5F)
+            link:           Color::Rgb(234, 234, 234), // Cursor/Cyan (#eaeaea)
+            link_arrow:     Color::Rgb(255, 193, 7),
+            arrow_dim:      Color::Rgb(51,  51,  51),  // Normal Black (#333333)
+            node:           Color::Rgb(190, 190, 190), // Foreground (#bebebe)
+            selected:       Color::Rgb(255, 193, 7),   // Amber accent
+            prefix:         Color::Rgb(138, 138, 141),
+            dim:            Color::Rgb(51,  51,  51),
             status_todo:    Color::Rgb(142, 142, 142), // Gray
-            status_progress:Color::Rgb(230, 142, 13),  // Orange/Amber
+            status_progress:Color::Rgb(230, 142, 13),  // Amber
             status_done:    Color::Rgb(80,  250, 123), // Green
             status_blocked: Color::Rgb(255, 85,  85),  // Red
-            },
+        },
     ]
 }
 
