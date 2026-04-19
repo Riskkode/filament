@@ -159,6 +159,14 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 else if node.collapsed { format!("  [+{}]", node.children.len()) }
                 else { String::new() };
 
+            let status_span = match node.tags.get("status").map(|s| s.as_str()) {
+                Some("todo")        => Span::styled("○ ", Style::default().fg(pal::STATUS_TODO)),
+                Some("in_progress") => Span::styled("◑ ", Style::default().fg(pal::STATUS_PROGRESS)),
+                Some("completed")   => Span::styled("● ", Style::default().fg(pal::STATUS_DONE)),
+                Some("blocked")     => Span::styled("⊘ ", Style::default().fg(pal::STATUS_BLOCKED)),
+                _ => Span::raw(""),
+            };
+
             let is_reparent_subj = matches!(&app.mode, Mode::Reparent { subject, .. } if *subject == id);
             let is_reparent_cur  = matches!(&app.mode, Mode::Reparent { cursor,  .. } if *cursor  == id);
             let is_insert_parent = matches!(&app.mode,
@@ -186,6 +194,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 Paragraph::new(Line::from(vec![
                     Span::styled(prefix,             Style::default().fg(pal::PREFIX)),
                     Span::styled("> ",               Style::default().fg(pal::DIM)),
+                    status_span,
                     Span::styled(node.label.clone(), label_style),
                     Span::styled(collapse_suffix,    Style::default().fg(pal::DIM)),
                 ])),
@@ -487,6 +496,8 @@ fn build_status(app: &App) -> String {
         }
         Mode::Canvas { state: CanvasState::Goto { buf, .. } } =>
             format!(" finding node: \"{}\" ", buf),
+        Mode::Canvas { state: CanvasState::TagStatus } =>
+            " status tag │ t:todo  p:progress  c:done  b:blocked  x:clear  Esc:cancel ".to_string(),
         Mode::Help =>
             " Browsing Help tree │ hjkl:navigate  z:toggle  Esc/?:close ".to_string(),
     }

@@ -143,13 +143,24 @@ fn main() -> io::Result<()> {
                             (_, KeyCode::Esc)       => app.canvas_cancel_sub(),
                             (_, KeyCode::Backspace) => app.canvas_pick_backspace(),
                             (KeyModifiers::NONE, KeyCode::Char(c)) if c.is_ascii_digit() || c == ',' || c == '-' => app.canvas_pick_char(c),
-                            
+
                             // Allow movement while picking
                             (KeyModifiers::NONE, KeyCode::Char('h')) | (_, KeyCode::Left)  => app.cursor_move(-1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('l')) | (_, KeyCode::Right) => app.cursor_move(1, 0, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('k')) | (_, KeyCode::Up)    => app.cursor_move(0, -1, canvas_w, canvas_h as u16),
                             (KeyModifiers::NONE, KeyCode::Char('j')) | (_, KeyCode::Down)  => app.cursor_move(0, 1, canvas_w, canvas_h as u16),
-                            
+                            _ => {}
+                        }
+                    }
+                    // TagStatus sub-state: wait for t, p, c, b, x
+                    else if let CanvasState::TagStatus = cs {
+                        match key.code {
+                            KeyCode::Char('t') => app.canvas_set_status(Some("todo")),
+                            KeyCode::Char('p') => app.canvas_set_status(Some("in_progress")),
+                            KeyCode::Char('c') => app.canvas_set_status(Some("completed")),
+                            KeyCode::Char('b') => app.canvas_set_status(Some("blocked")),
+                            KeyCode::Char('x') => app.canvas_set_status(None),
+                            KeyCode::Char('s') | KeyCode::Esc => app.mode = Mode::Canvas { state: CanvasState::Browse },
                             _ => {}
                         }
                     }
@@ -258,6 +269,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('x'))  => { app.delete_selected(); }
                             (KeyModifiers::NONE, KeyCode::Char('p'))  => { app.canvas_pick_or_place(); }
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
+                            (KeyModifiers::NONE, KeyCode::Char('s'))  => app.canvas_start_status_tagging(),
                             (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
                             (KeyModifiers::NONE, KeyCode::Char('u'))  => app.undo(),
                             (KeyModifiers::NONE, KeyCode::Char('?'))  => app.canvas_start_help(),

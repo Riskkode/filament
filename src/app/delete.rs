@@ -34,6 +34,7 @@ impl App {
                     world_x:     node.world_x,
                     world_y:     node.world_y,
                     world_x_end: 0,
+                    tags:        node.tags.clone(),
                 });
             }
         }

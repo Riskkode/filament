@@ -1,6 +1,7 @@
 use super::{App, Mode};
 use super::mode::StartMenuState;
 use crate::models::node::Node;
+use std::collections::HashMap;
 
 impl App {
     // ── Navigation ────────────────────────────────────────────────────────────
@@ -264,6 +265,7 @@ impl App {
             world_x: 0,
             world_y: 0,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
         self.nodes[new_node_idx].children.push(child_idx);
         self.nodes[new_node_idx].collapsed = false;

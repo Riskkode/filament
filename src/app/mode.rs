@@ -67,6 +67,8 @@ pub enum CanvasState {
     Pick { origin_id: usize, origin_x: i32, origin_y: i32, buf: String, cursor: usize },
     /// Linking: navigate cursor to a target; Enter toggles the link, Esc cancels.
     Link { origin_id: usize },
+    /// Status tagging chord waiting for next key.
+    TagStatus,
     /// Quick jump to node by name.
     Goto { buf: String, cursor: usize, matches: Vec<usize>, match_idx: usize, previous: Box<CanvasState> },
     /// Arrow-display settings menu open — waiting for i / o / g / F / Esc.

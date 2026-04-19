@@ -45,6 +45,13 @@ pub fn open(path: &Path) -> Result<Connection> {
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             snapshot  TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS node_tags (
+            node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            tag_key    TEXT NOT NULL,
+            tag_value  TEXT NOT NULL,
+            PRIMARY KEY (node_id, tag_key)
+        );
     ")?;
 
     Ok(conn)

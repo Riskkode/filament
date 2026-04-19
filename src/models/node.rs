@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Node {
@@ -18,4 +19,6 @@ pub struct Node {
     /// Right anchor: world_x + depth*2 + 2 + label.chars().count().
     /// Recomputed every frame by recompute_layout; initialise to 0.
     pub world_x_end: i32,
+    /// Key-value metadata tags (e.g., "status" => "todo").
+    pub tags:      HashMap<String, String>,
 }

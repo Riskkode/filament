@@ -16,6 +16,7 @@ fn mode_color(mode: &Mode) -> Color {
         Mode::Reparent { .. }                                          => pal::REPARENT,
         Mode::Canvas { state: CanvasState::Pick { .. } }              => pal::PICK,
         Mode::Canvas { state: CanvasState::Link { .. } }              => pal::LINK,
+        Mode::Canvas { state: CanvasState::TagStatus }                => pal::EDIT,
         Mode::Canvas { .. }                                            => pal::CANVAS,
         Mode::Help                                                     => pal::PICK,
     }
@@ -67,6 +68,10 @@ pub fn build_title(mode: &Mode) -> Line<'_> {
             "LINK", pal::LINK,
             "hjkl:navigate  Enter:toggle link  Esc:cancel".to_string(),
         ),
+        Mode::Canvas { state: CanvasState::TagStatus } => modal_title(
+            "STATUS", pal::EDIT,
+            "t:todo  p:in progress  c:done  b:blocked  x:clear  Esc:cancel".to_string(),
+        ),
         Mode::Canvas { state: CanvasState::Goto { .. } } => modal_title(
             "GOTO", pal::EDIT,
             "type to search  Tab:next match  Enter:jump  Esc:cancel".to_string(),
@@ -111,6 +116,7 @@ fn canvas_title() -> Line<'static> {
         bracket("v",   pal::REPARENT), Span::styled(" move  ",    pal::tinted(pal::REPARENT)),
         bracket("p",   pal::PICK),     Span::styled(" pick  ",    pal::tinted(pal::PICK)),
         bracket("f",   pal::LINK),     Span::styled(" link  ",    pal::tinted(pal::LINK)),
+        bracket("s",   pal::EDIT),     Span::styled(" status  ",  pal::tinted(pal::EDIT)),
         bracket("g",   pal::EDIT),     Span::styled(" goto  ",    pal::tinted(pal::EDIT)),
         bracket("?",   pal::PICK),     Span::styled(" help",      pal::tinted(pal::PICK)),
     ])

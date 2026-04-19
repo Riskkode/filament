@@ -1,5 +1,6 @@
 use super::{App, CanvasState, InputAction, Mode};
 use crate::models::node::Node;
+use std::collections::HashMap;
 
 impl App {
     // ── Sub-state transitions ─────────────────────────────────────────────────
@@ -122,6 +123,7 @@ impl App {
                 label: buf, parent: None, children: vec![], links: vec![],
                 collapsed: false, row: usize::MAX,
                 world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
+                tags: HashMap::new(),
             });
             self.selected = id;
             // Chain straight into insert-child so editing continues normally.
@@ -142,6 +144,29 @@ impl App {
         if !self.has_selection() { return; }
         let origin_id = self.selected;
         self.mode = Mode::Canvas { state: CanvasState::Link { origin_id } };
+    }
+
+    /// `s` — enter Status Tagging state from the currently selected node.
+    pub fn canvas_start_status_tagging(&mut self) {
+        if !self.has_selection() { return; }
+        self.mode = Mode::Canvas { state: CanvasState::TagStatus };
+    }
+
+    /// Set or clear the "status" tag on the currently selected node.
+    pub fn canvas_set_status(&mut self, status: Option<&str>) {
+        if !self.has_selection() {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+            return;
+        }
+        let id = self.selected;
+        self.push_undo();
+        if let Some(s) = status {
+            self.nodes[id].tags.insert("status".to_string(), s.to_string());
+        } else {
+            self.nodes[id].tags.remove("status");
+        }
+        self.mode = Mode::Canvas { state: CanvasState::Browse };
+        self.save_project();
     }
 
     /// Enter — toggle the link between origin and the node nearest the cursor.
@@ -335,6 +360,7 @@ impl App {
                 world_x: 0,
                 world_y: 0,
                 world_x_end: 0,
+                tags: HashMap::new(),
             });
             if let Some(p) = parent { nodes[p].children.push(id); }
             id

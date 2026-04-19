@@ -54,6 +54,7 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
         world_x:   r.world_x,
         world_y:   r.world_y,
         world_x_end: 0,
+        tags:      HashMap::new(),
     }).collect();
 
     // Build children lists (rows were ordered by parent_id, sort_key so
@@ -78,6 +79,18 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
         }
     }
 
+    // Load tags.
+    let mut tag_stmt = conn.prepare("SELECT node_id, tag_key, tag_value FROM node_tags")?;
+    let tags_list: Vec<(i64, String, String)> = tag_stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?.collect::<Result<_>>()?;
+
+    for (node_id, key, value) in tags_list {
+        if let Some(&idx) = id_to_idx.get(&node_id) {
+            nodes[idx].tags.insert(key, value);
+        }
+    }
+
     Ok((nodes, id_to_idx))
 }
 
@@ -95,6 +108,7 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
     // Disable FKs for this connection (within the transaction).
     tx.execute_batch("PRAGMA foreign_keys=OFF;")?;
 
+    tx.execute("DELETE FROM node_tags", [])?;
     tx.execute("DELETE FROM links", [])?;
     tx.execute("DELETE FROM nodes", [])?;
 
@@ -121,6 +135,13 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
             ],
         )?;
         idx_to_id[i] = tx.last_insert_rowid();
+
+        for (key, value) in &node.tags {
+            tx.execute(
+                "INSERT INTO node_tags (node_id, tag_key, tag_value) VALUES (?1, ?2, ?3)",
+                params![idx_to_id[i], key, value],
+            )?;
+        }
     }
 
     for (i, node) in nodes.iter().enumerate() {

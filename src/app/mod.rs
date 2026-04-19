@@ -12,7 +12,7 @@ use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
 pub struct App {
     pub arrow:    ArrowSettings,
@@ -248,6 +248,7 @@ impl App {
             world_x: 0,
             world_y: 0,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
 
         // Add projects as children of "Open"
@@ -264,6 +265,7 @@ impl App {
                 world_x: 0,
                 world_y: (i + 1) as i32,
                 world_x_end: 0,
+                tags: HashMap::new(),
             });
             self.nodes[open_idx].children.push(child_idx);
         }
@@ -279,6 +281,7 @@ impl App {
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
 
         // 3. Root: Import
@@ -292,6 +295,7 @@ impl App {
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
 
         // 4. Root: Find
@@ -305,6 +309,7 @@ impl App {
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
 
         // 4. Root: Settings
@@ -319,6 +324,7 @@ impl App {
             world_x: 0,
             world_y: settings_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
         
         // Add specific settings as children of "Settings"
@@ -333,6 +339,7 @@ impl App {
             world_x: 0,
             world_y: path_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
         self.nodes[settings_idx].children.push(path_idx);
 
@@ -347,6 +354,7 @@ impl App {
             world_x: 0,
             world_y: user_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
         self.nodes[settings_idx].children.push(user_idx);
 
@@ -361,6 +369,7 @@ impl App {
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
     }
 
@@ -427,11 +436,14 @@ impl App {
                 self.nodes[id].world_x   = rx;
                 self.nodes[id].world_y   = node_y;
                 let label_cols = self.nodes[id].label.chars().count() as i32;
-                let mut suffix_cols = 0;
+                let mut decoration_cols = 0;
                 if !self.nodes[id].children.is_empty() && self.nodes[id].collapsed {
-                    suffix_cols = 5 + self.nodes[id].children.len().to_string().len() as i32;
+                    decoration_cols += 5 + self.nodes[id].children.len().to_string().len() as i32;
                 }
-                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + suffix_cols;
+                if self.nodes[id].tags.contains_key("status") {
+                    decoration_cols += 2;
+                }
+                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + decoration_cols;
             }
             order.extend(local);
         }
@@ -635,6 +647,7 @@ mod tests {
                 world_x: 10,
                 world_y: 5,
                 world_x_end: 30,
+                tags: HashMap::new(),
             }
         ];
 
@@ -668,6 +681,7 @@ mod tests {
             world_x: 10,
             world_y: 5,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
         app.nodes.push(Node {
             label: "Child".to_string(),
@@ -679,6 +693,7 @@ mod tests {
             world_x: 0,
             world_y: 0,
             world_x_end: 0,
+            tags: HashMap::new(),
         });
 
         app.recompute_layout();
