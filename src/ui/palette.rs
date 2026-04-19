@@ -1,6 +1,6 @@
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Palette {

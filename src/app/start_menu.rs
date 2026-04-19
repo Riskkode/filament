@@ -6,7 +6,7 @@ use std::collections::HashMap;
 impl App {
     // ── Navigation ────────────────────────────────────────────────────────────
 
-    pub fn start_menu_nav(&mut self, delta: i32) {
+    pub fn start_menu_nav(&mut self, delta: i32, canvas_h: u16) {
         let order = self.recompute_layout();
         let count = order.len();
         if count == 0 { return; }
@@ -18,9 +18,19 @@ impl App {
         if let Mode::StartMenu { state: StartMenuState::Main { ref mut selected } } = self.mode {
             *selected = self.selected;
         }
+
+        // Lazy camera scroll for start menu.
+        // banner_h=6 + margin=2 = 8 lines offset.
+        let banner_h = 6i32;
+        let visible_height = (canvas_h as i32).saturating_sub(banner_h + 5).max(1);
+        
+        let wy = next_pos as i32;
+        let sy = wy - self.camera_y;
+        if sy < 0 { self.camera_y = wy; }
+        else if sy >= visible_height { self.camera_y = wy - (visible_height - 1); }
     }
 
-    pub fn start_menu_go_to_label(&mut self, target: &str) {
+    pub fn start_menu_go_to_label(&mut self, target: &str, canvas_h: u16) {
         let target_lower = if target == "new" { "+ new".to_string() } 
             else if target == "help" { "help".to_string() }
             else { target.to_lowercase() };
@@ -31,6 +41,18 @@ impl App {
             if let Mode::StartMenu { state: StartMenuState::Main { ref mut selected } } = self.mode {
                 *selected = idx;
             }
+            
+            // Scroll to it
+            let order = self.recompute_layout();
+            if let Some(pos) = order.iter().position(|&(id, _)| id == idx) {
+                let banner_h = 6i32;
+                let visible_height = (canvas_h as i32).saturating_sub(banner_h + 5).max(1);
+                let wy = pos as i32;
+                let sy = wy - self.camera_y;
+                if sy < 0 { self.camera_y = wy; }
+                else if sy >= visible_height { self.camera_y = wy - (visible_height - 1); }
+            }
+
             self.start_menu_confirm();
         }
     }

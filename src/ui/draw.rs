@@ -560,6 +560,7 @@ fn draw_start_menu(
         let menu_w = max_node_w.min(inner.width.saturating_sub(4));
         let menu_x = banner_x;
         let menu_y = banner_y + banner_h + 2;
+        let visible_height = inner.height.saturating_sub(banner_h + 4);
 
         let mut trail: Vec<bool> = Vec::new();
         for (idx, &(id, depth)) in order.iter().enumerate() {
@@ -570,6 +571,14 @@ fn draw_start_menu(
                 if trail.len() < depth { trail.push(is_last[idx]); }
                 else { *trail.last_mut().unwrap() = is_last[idx]; }
             }
+
+            // Scrolling logic
+            let wy = idx as i32;
+            let sy = wy - app.camera_y;
+            if sy < 0 || sy >= visible_height as i32 {
+                continue;
+            }
+            let sy = sy as u16;
 
             let prefix = box_prefix(&trail[..depth.min(trail.len())]);
             let collapse_suffix = if node.children.is_empty() { String::new() }
@@ -623,7 +632,7 @@ fn draw_start_menu(
                 let full_prefix = format!("{}{}{} ", prefix, indicator, input_prefix);
                 render_input_line(
                     frame,
-                    Rect { x: menu_x, y: menu_y + idx as u16, width: menu_w, height: 1 },
+                    Rect { x: menu_x, y: menu_y + sy, width: menu_w, height: 1 },
                     0, 0,
                     &full_prefix, buf, cursor, &app.palette, color
                 );
@@ -637,7 +646,7 @@ fn draw_start_menu(
                     ])),
                     Rect {
                         x: menu_x,
-                        y: menu_y + idx as u16,
+                        y: menu_y + sy,
                         width: menu_w,
                         height: 1
                     },
@@ -651,7 +660,7 @@ fn draw_start_menu(
                     Paragraph::new(Span::styled(shortcut_text, Style::default().fg(app.palette.insert))),
                     Rect {
                         x: banner_right_x.saturating_sub(shortcut_w),
-                        y: menu_y + idx as u16,
+                        y: menu_y + sy,
                         width: shortcut_w,
                         height: 1,
                     },
