@@ -38,6 +38,5 @@ pub struct Node {
     /// If true, this node represents a link to an Archive note (label is the title).
     pub is_managed_note: bool,
     /// If set, this node is a virtual managed subnode that represents part of another node's metadata.
-    #[serde(skip, default)]
     pub managed: Option<ManagedNodeType>,
 }

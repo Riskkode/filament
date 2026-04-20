@@ -135,7 +135,12 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
 
     for &i in &order {
         let node = &nodes[i];
-        let parent_id: Option<i64> = node.parent.map(|p| idx_to_id[p]);
+        if node.managed.is_some() { continue; }
+
+        let parent_id: Option<i64> = node.parent.and_then(|p| {
+            let id = idx_to_id[p];
+            if id == 0 { None } else { Some(id) }
+        });
         let sort_key: i64 = node.parent
             .and_then(|p| nodes[p].children.iter().position(|&c| c == i))
             .unwrap_or(0) as i64;
@@ -171,8 +176,9 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
     }
 
     for (i, node) in nodes.iter().enumerate() {
+        if node.managed.is_some() || idx_to_id[i] == 0 { continue; }
         for &tgt in &node.links {
-            if tgt < nodes.len() {
+            if tgt < nodes.len() && nodes[tgt].managed.is_none() && idx_to_id[tgt] != 0 {
                 tx.execute(
                     "INSERT OR IGNORE INTO links (src_id, tgt_id) VALUES (?1, ?2)",
                     params![idx_to_id[i], idx_to_id[tgt]],
@@ -220,21 +226,143 @@ pub fn load_history(conn: &Connection) -> Result<Vec<Vec<Node>>> {
 /// Depth-first topological order so parents are always inserted before children.
 fn topo_order(nodes: &[Node]) -> Vec<usize> {
     let mut out = Vec::with_capacity(nodes.len());
-    let roots: Vec<usize> = (0..nodes.len()).filter(|&i| nodes[i].parent.is_none()).collect();
+    let roots: Vec<usize> = (0..nodes.len())
+        .filter(|&i| nodes[i].parent.is_none() && nodes[i].managed.is_none())
+        .collect();
     for root in roots {
         dfs(nodes, root, &mut out);
     }
     // Catch any nodes not reachable from roots (detached, shouldn't happen but be safe).
     let in_out: std::collections::HashSet<usize> = out.iter().copied().collect();
     for i in 0..nodes.len() {
-        if !in_out.contains(&i) { out.push(i); }
+        if !in_out.contains(&i) && nodes[i].managed.is_none() { out.push(i); }
     }
     out
 }
 
 fn dfs(nodes: &[Node], node: usize, out: &mut Vec<usize>) {
+    if nodes[node].managed.is_some() { return; }
     out.push(node);
     for &child in &nodes[node].children {
         dfs(nodes, child, out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::node::ManagedNodeType;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("
+            CREATE TABLE nodes (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                label            TEXT    NOT NULL,
+                parent_id        INTEGER REFERENCES nodes(id),
+                sort_key         INTEGER NOT NULL DEFAULT 0,
+                collapsed        INTEGER NOT NULL DEFAULT 0,
+                world_x          INTEGER NOT NULL DEFAULT 0,
+                world_y          INTEGER NOT NULL DEFAULT 0,
+                is_managed_note  INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE links (
+                src_id INTEGER NOT NULL REFERENCES nodes(id),
+                tgt_id INTEGER NOT NULL REFERENCES nodes(id),
+                PRIMARY KEY (src_id, tgt_id)
+            );
+            CREATE TABLE history (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                snapshot  TEXT NOT NULL
+            );
+            CREATE TABLE node_tags (
+                node_id    INTEGER NOT NULL REFERENCES nodes(id),
+                tag_key    TEXT NOT NULL,
+                tag_value  TEXT NOT NULL,
+                PRIMARY KEY (node_id, tag_key)
+            );
+            CREATE TABLE node_times (
+                node_id      INTEGER NOT NULL REFERENCES nodes(id),
+                time_type    TEXT NOT NULL,
+                time_value   INTEGER NOT NULL,
+                time_pattern TEXT,
+                PRIMARY KEY (node_id, time_type)
+            );
+        ").unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_managed_nodes_not_saved() {
+        let mut conn = setup_test_db();
+        let nodes = vec![
+            Node {
+                label: "Root".to_string(),
+                parent: None,
+                children: vec![1],
+                links: vec![],
+                collapsed: false,
+                row: 0,
+                world_x: 0,
+                world_y: 0,
+                world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: None,
+            },
+            Node {
+                label: "Managed".to_string(),
+                parent: Some(0),
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: 0,
+                world_x: 0,
+                world_y: 0,
+                world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: Some(ManagedNodeType::TimeGroup),
+            },
+        ];
+
+        save(&mut conn, &nodes).unwrap();
+
+        let (loaded_nodes, _) = load(&conn).unwrap();
+        assert_eq!(loaded_nodes.len(), 1);
+        assert_eq!(loaded_nodes[0].label, "Root");
+    }
+
+    #[test]
+    fn test_managed_nodes_in_history() {
+        let conn = setup_test_db();
+        let nodes = vec![
+            Node {
+                label: "Managed".to_string(),
+                parent: None,
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: 0,
+                world_x: 0,
+                world_y: 0,
+                world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: Some(ManagedNodeType::TimeGroup),
+            },
+        ];
+
+        push_history(&conn, &nodes).unwrap();
+        let history = load_history(&conn).unwrap();
+        
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].len(), 1);
+        assert!(history[0][0].managed.is_some());
+        assert_eq!(history[0][0].managed, Some(ManagedNodeType::TimeGroup));
     }
 }
