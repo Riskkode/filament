@@ -22,7 +22,7 @@ pub enum Mode {
     /// Time tagging: user is typing the date/time string.
     TimeInput { time_type: String, buf: String, cursor: usize, previous: Box<Mode> },
     /// Note association: user is typing the note title.
-    NoteInput { buf: String, cursor: usize, previous: Box<Mode> },
+    NoteInput { buf: String, cursor: usize, note_type: crate::models::archive_note::NoteType, previous: Box<Mode> },
     Help,
 }
 

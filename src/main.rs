@@ -161,6 +161,14 @@ fn main() -> io::Result<()> {
                     KeyCode::Backspace => app.canvas_note_backspace(),
                     KeyCode::Left  => app.canvas_note_move_cursor(-1),
                     KeyCode::Right => app.canvas_note_move_cursor(1),
+                    KeyCode::Tab   => {
+                        if let Mode::NoteInput { ref mut note_type, .. } = app.mode {
+                            *note_type = match note_type {
+                                crate::models::archive_note::NoteType::Quick => crate::models::archive_note::NoteType::Reference,
+                                crate::models::archive_note::NoteType::Reference => crate::models::archive_note::NoteType::Quick,
+                            };
+                        }
+                    }
                     KeyCode::Char(c) => app.canvas_note_char(c),
                     _ => {}
                 },

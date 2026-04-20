@@ -336,6 +336,7 @@ impl App {
         self.mode = Mode::NoteInput {
             buf: String::new(),
             cursor: 0,
+            note_type: crate::models::archive_note::NoteType::Quick,
             previous: Box::new(self.mode.clone()),
         };
     }
@@ -364,8 +365,8 @@ impl App {
     }
 
     pub fn canvas_confirm_note(&mut self) {
-        let (buf, previous) = match &self.mode {
-            Mode::NoteInput { buf, previous, .. } => (buf.clone(), previous.clone()),
+        let (buf, note_type, previous) = match &self.mode {
+            Mode::NoteInput { buf, note_type, previous, .. } => (buf.clone(), *note_type, previous.clone()),
             _ => return,
         };
 
@@ -381,8 +382,10 @@ impl App {
             let note_title = trimmed.to_string();
             
             // 1. Ensure note exists in archive
-            if !self.notes.iter().any(|n| n.title == note_title) {
-                self.notes.push(ArchiveNote { id: None, title: note_title.clone(), content: String::new() });
+            if let Some(existing_idx) = self.notes.iter().position(|n| n.title == note_title) {
+                self.notes[existing_idx].note_type = note_type;
+            } else {
+                self.notes.push(ArchiveNote { id: None, title: note_title.clone(), content: String::new(), note_type });
             }
 
             // 2. Create managed child node
@@ -403,6 +406,47 @@ impl App {
                 managed: None,
             });
             self.nodes[parent_id].children.push(id);
+
+            // 3. If it's a reference note, auto-generate for children
+            if note_type == crate::models::archive_note::NoteType::Reference {
+                let children_to_process: Vec<usize> = self.nodes[parent_id].children.iter()
+                    .cloned()
+                    .filter(|&cid| cid != id && !self.nodes[cid].is_managed_note)
+                    .collect();
+                
+                for cid in children_to_process {
+                    let child_label = self.nodes[cid].label.clone();
+                    // Avoid duplicate notes on the same node
+                    if !self.nodes[cid].children.iter().any(|&gcid| self.nodes[gcid].is_managed_note && self.nodes[gcid].label == child_label) {
+                        if !self.notes.iter().any(|n| n.title == child_label) {
+                            self.notes.push(ArchiveNote { 
+                                id: None, 
+                                title: child_label.clone(), 
+                                content: String::new(), 
+                                note_type: crate::models::archive_note::NoteType::Reference 
+                            });
+                        }
+                        
+                        let new_note_node_idx = self.nodes.len();
+                        self.nodes.push(Node {
+                            label: child_label,
+                            parent: Some(cid),
+                            children: vec![],
+                            links: vec![],
+                            collapsed: false,
+                            row: usize::MAX,
+                            world_x: 0,
+                            world_y: 0,
+                            world_x_end: 0,
+                            tags: HashMap::new(),
+                            times: HashMap::new(),
+                            is_managed_note: true,
+                            managed: None,
+                        });
+                        self.nodes[cid].children.push(new_note_node_idx);
+                    }
+                }
+            }
             self.selected = id; // Focus the new note node
         }
         

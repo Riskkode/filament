@@ -69,11 +69,21 @@ pub fn open(path: &Path) -> Result<Connection> {
         );
 
         CREATE TABLE IF NOT EXISTS notes (
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            title   TEXT NOT NULL UNIQUE,
-            content TEXT NOT NULL
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            title     TEXT NOT NULL UNIQUE,
+            content   TEXT NOT NULL,
+            note_type INTEGER NOT NULL DEFAULT 0
         );
     ")?;
+
+    // Migration: Add note_type column if it doesn't exist.
+    let has_note_type: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='note_type'", 
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if has_note_type == 0 {
+        let _ = conn.execute("ALTER TABLE notes ADD COLUMN note_type INTEGER NOT NULL DEFAULT 0", []);
+    }
 
     // Migration: Add time_pattern column if it doesn't exist.
     let has_pattern: i32 = conn.query_row(

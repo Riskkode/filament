@@ -10,7 +10,7 @@ pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, Sta
 
 use crate::models::node::{Node, ManagedNodeType};
 use crate::models::query::StatusQuery;
-use crate::models::archive_note::ArchiveNote;
+use crate::models::archive_note::{ArchiveNote, NoteType};
 use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
@@ -80,6 +80,45 @@ pub struct App {
 }
 
 impl App {
+    pub fn build_concatenated_document(&self, note_idx: usize) -> String {
+        let note_title = &self.notes[note_idx].title;
+        
+        // 1. Find the first node on canvas that points to this note
+        let Some(root_node_idx) = self.nodes.iter().enumerate().find(|(_, n)| {
+            n.is_managed_note && &n.label == note_title
+        }).and_then(|(i, _)| self.nodes[i].parent) else {
+            return self.notes[note_idx].content.clone();
+        };
+
+        // 2. Recursively build content
+        let mut result = String::new();
+        self.collect_reference_notes_recursive(root_node_idx, 1, &mut result);
+        result
+    }
+
+    fn collect_reference_notes_recursive(&self, node_idx: usize, depth: usize, out: &mut String) {
+        // Find if this node has a Reference Note child
+        let ref_note = self.nodes[node_idx].children.iter()
+            .map(|&cid| &self.nodes[cid])
+            .filter(|n| n.is_managed_note)
+            .find_map(|mn| self.notes.iter().find(|n| n.title == mn.label && n.note_type == crate::models::archive_note::NoteType::Reference));
+
+        if let Some(note) = ref_note {
+            // Add Markdown heading based on depth
+            let heading = "#".repeat(depth.min(6));
+            if !out.is_empty() { out.push_str("\n\n"); }
+            out.push_str(&format!("{} {}\n\n", heading, note.title));
+            out.push_str(&note.content);
+        }
+
+        // Recursively process children
+        for &cid in &self.nodes[node_idx].children {
+            if !self.nodes[cid].is_managed_note {
+                self.collect_reference_notes_recursive(cid, depth + 1, out);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         let settings = GlobalSettings::load();
         let palette = get_palette(&settings.palette);
@@ -626,7 +665,7 @@ impl App {
     // ── Archive ──────────────────────────────────────────────────────────────
 
     pub fn archive_add_note(&mut self, title: String, content: String) {
-        self.notes.push(ArchiveNote { id: None, title, content });
+        self.notes.push(ArchiveNote { id: None, title, content, note_type: NoteType::Quick });
         self.save_project();
     }
 
@@ -655,7 +694,7 @@ impl App {
 
     pub fn archive_new_note(&mut self) {
         let idx = self.notes.len();
-        self.notes.push(ArchiveNote { id: None, title: "New Note".to_string(), content: String::new() });
+        self.notes.push(ArchiveNote { id: None, title: "New Note".to_string(), content: String::new(), note_type: NoteType::Quick });
         self.mode = Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf: "New Note".to_string(), cursor: 8 }, previous: Box::new(self.mode.clone()) };
         self.save_project();
     }
@@ -722,7 +761,7 @@ impl App {
                 if index < self.notes.len() {
                     self.notes[index].title = title;
                 } else {
-                    self.notes.push(ArchiveNote { id: None, title, content: String::new() });
+                    self.notes.push(ArchiveNote { id: None, title, content: String::new(), note_type: NoteType::Quick });
                 }
                 self.save_project();
                 self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
@@ -751,7 +790,7 @@ impl App {
                 if index < self.notes.len() {
                     self.notes[index].title = title;
                 } else {
-                    self.notes.push(ArchiveNote { id: None, title, content: String::new() });
+                    self.notes.push(ArchiveNote { id: None, title, content: String::new(), note_type: NoteType::Quick });
                 }
                 self.save_project();
                 self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };

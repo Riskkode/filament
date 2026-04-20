@@ -86,6 +86,14 @@ pub fn draw_archive_page(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, 
             let content_area = editor_chunks[1];
             let footer_area = editor_chunks[2];
 
+            // Use concatenated document if it's a Reference Note and we are not in an explicit edit mode
+            let is_ref = note.note_type == crate::models::archive_note::NoteType::Reference;
+            let combined_content = if is_ref && !is_editing_title && !is_editing_content {
+                app.build_concatenated_document(selected_idx)
+            } else {
+                note.content.clone()
+            };
+
             // Title
             let title_text = if is_editing_title {
                 if let Mode::ArchivePage { state: ArchiveState::EditTitle { buf, cursor, .. }, .. } = &app.mode {
@@ -94,7 +102,11 @@ pub fn draw_archive_page(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, 
                     Line::from(note.title.as_str())
                 }
             } else {
-                Line::from(note.title.as_str())
+                let suffix = if is_ref { " (Reference - Document View)" } else { " (Quick)" };
+                Line::from(vec![
+                    Span::raw(note.title.as_str()),
+                    Span::styled(suffix, Style::default().fg(app.palette.dim).add_modifier(Modifier::ITALIC)),
+                ])
             };
 
             frame.render_widget(
@@ -111,16 +123,16 @@ pub fn draw_archive_page(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, 
                 if let Mode::ArchivePage { state: ArchiveState::EditContent { buf, cursor, .. }, .. } = &app.mode {
                     render_editable_content(buf, *cursor, &app.palette, app.palette.edit)
                 } else {
-                    note.content.lines().map(Line::from).collect()
+                    combined_content.lines().map(Line::from).collect()
                 }
             } else {
-                note.content.lines().map(Line::from).collect()
+                combined_content.lines().map(Line::from).collect()
             };
 
             frame.render_widget(
                 Paragraph::new(content_lines)
                     .block(Block::default()
-                        .title(" Content ")),
+                        .title(if is_ref && !is_editing_content { " Document View (Concatenated) " } else { " Content " })),
                 content_area,
             );
 

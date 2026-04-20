@@ -217,7 +217,16 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             ];
 
             if node.is_managed_note {
-                spans.push(Span::styled("🗒 ", Style::default().fg(app.palette.insert)));
+                let note_type = app.notes.iter()
+                    .find(|n| n.title == node.label)
+                    .map(|n| n.note_type)
+                    .unwrap_or(crate::models::archive_note::NoteType::Quick);
+                
+                let (icon, color) = match note_type {
+                    crate::models::archive_note::NoteType::Quick => ("🗒 ", app.palette.insert),
+                    crate::models::archive_note::NoteType::Reference => ("📚 ", app.palette.reparent),
+                };
+                spans.push(Span::styled(icon, Style::default().fg(color)));
             }
 
             spans.push(Span::styled(node.label.clone(), label_style));
@@ -388,13 +397,16 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let max_notes = (canvas.height / preview_height) as usize;
 
             let notes_to_show: Vec<_> = if selected_node.is_managed_note {
-                app.notes.iter().filter(|n| n.title == selected_node.label).take(max_notes).collect()
+                app.notes.iter()
+                    .filter(|n| n.title == selected_node.label && n.note_type == crate::models::archive_note::NoteType::Quick)
+                    .take(max_notes)
+                    .collect()
             } else {
-                // If it's a regular node, show up to max_notes linked note children.
+                // If it's a regular node, show up to max_notes linked Quick note children.
                 selected_node.children.iter()
                     .map(|&cid| &app.nodes[cid])
                     .filter(|n| n.is_managed_note)
-                    .filter_map(|mn| app.notes.iter().find(|n| n.title == mn.label))
+                    .filter_map(|mn| app.notes.iter().find(|n| n.title == mn.label && n.note_type == crate::models::archive_note::NoteType::Quick))
                     .take(max_notes)
                     .collect()
             };
@@ -689,8 +701,13 @@ pub fn build_status(app: &App) -> String {
             " clear time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back ".to_string(),
         Mode::TimeInput { time_type, buf, .. } =>
             format!(" enter {} │ \"{}\" ", time_type, buf),
-        Mode::NoteInput { buf, .. } =>
-            format!(" enter note title │ \"{}\" ", buf),
+        Mode::NoteInput { buf, note_type, .. } => {
+            let type_str = match note_type {
+                crate::models::archive_note::NoteType::Quick => "Quick",
+                crate::models::archive_note::NoteType::Reference => "Reference",
+            };
+            format!(" enter {} note title │ \"{}\"  (Tab to toggle type) ", type_str, buf)
+        }
         Mode::Help =>
             " Browsing Help tree │ hjkl:navigate  z:toggle  Esc/?:close ".to_string(),
     }
