@@ -7,6 +7,12 @@ pub struct TimeTag {
     pub pattern:   Option<String>,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum ManagedNodeType {
+    TimeGroup,
+    TimeTag { key: String },
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Node {
     pub label:     String,
@@ -31,4 +37,7 @@ pub struct Node {
     pub times:     HashMap<String, TimeTag>,
     /// If true, this node represents a link to an Archive note (label is the title).
     pub is_managed_note: bool,
+    /// If set, this node is a virtual managed subnode that represents part of another node's metadata.
+    #[serde(skip, default)]
+    pub managed: Option<ManagedNodeType>,
 }

@@ -59,6 +59,7 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
         tags:      HashMap::new(),
         times:     HashMap::new(),
         is_managed_note: r.is_managed_note,
+        managed: None,
     }).collect();
 
     // Build children lists (rows were ordered by parent_id, sort_key so

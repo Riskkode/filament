@@ -192,7 +192,9 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let is_link_origin   = matches!(&app.mode,
                 Mode::Canvas { state: CanvasState::Link { origin_id } } if *origin_id == id);
 
-            let label_style = if is_reparent_subj || is_pick_origin {
+            let label_style = if node.managed.is_some() {
+                app.palette.tinted(app.palette.edit).add_modifier(Modifier::ITALIC)
+            } else if is_reparent_subj || is_pick_origin {
                 app.palette.solid(app.palette.pick)
             } else if is_link_origin {
                 app.palette.solid(app.palette.link)
@@ -221,23 +223,28 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             spans.push(Span::styled(node.label.clone(), label_style));
             spans.push(Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)));
 
-            // Render time tags
-            let mut time_keys: Vec<_> = node.times.keys().cloned().collect();
-            time_keys.sort();
-            for key in time_keys {
-                if let Some(tag) = node.times.get(&key) {
-                    let val_str = if key == "duration" {
-                        format_duration(tag.timestamp)
-                    } else {
-                        let dt = Local.timestamp_opt(tag.timestamp, 0).unwrap();
-                        let date_str = dt.format("%Y-%m-%d").to_string();
-                        if let Some(ref pattern) = tag.pattern {
-                            format!("{} ({})", date_str, pattern)
+            // Render time tags summary only if collapsed
+            if node.collapsed {
+                let mut time_keys: Vec<_> = node.times.keys().cloned().collect();
+                time_keys.sort();
+                for key in time_keys {
+                    if let Some(tag) = node.times.get(&key) {
+                        let val_str = if key == "duration" {
+                            format_duration(tag.timestamp)
                         } else {
-                            date_str
-                        }
-                    };
-                    spans.push(Span::styled(format!(" [{}: {}]", key, val_str), Style::default().fg(app.palette.dim)));
+                            let dt = Local.timestamp_opt(tag.timestamp, 0).unwrap();
+                            let date_str = dt.format("%Y-%m-%d").to_string();
+                            if let Some(ref pattern) = tag.pattern {
+                                format!("{} ({})", date_str, pattern)
+                            } else {
+                                date_str
+                            }
+                        };
+                        spans.push(Span::styled(
+                            format!(" [{}: {}]", key, val_str), 
+                            Style::default().fg(app.palette.dim).add_modifier(Modifier::ITALIC)
+                        ));
+                    }
                 }
             }
 

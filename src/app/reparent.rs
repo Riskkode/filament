@@ -3,6 +3,7 @@ use super::{App, CanvasState, Mode};
 impl App {
     pub fn enter_reparent(&mut self) {
         if !self.has_selection() { return; }
+        if self.nodes[self.selected].managed.is_some() { return; }
         self.push_undo();
         let subject     = self.selected;
         let orig_parent = self.nodes[subject].parent;
@@ -22,6 +23,7 @@ impl App {
             _ => return,
         };
         if new_cursor == old_cursor { return; }
+        if self.nodes[new_cursor].managed.is_some() { return; }
         if let Some(p) = self.nodes[subject].parent { self.nodes[p].children.retain(|&c| c != subject); }
         self.nodes[new_cursor].children.push(subject);
         self.nodes[subject].parent = Some(new_cursor);

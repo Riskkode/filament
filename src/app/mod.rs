@@ -8,7 +8,7 @@ pub mod query;
 
 pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
 
-use crate::models::node::Node;
+use crate::models::node::{Node, ManagedNodeType};
 use crate::models::query::StatusQuery;
 use crate::models::archive_note::ArchiveNote;
 use crate::persistence::project::ProjectSettings;
@@ -17,7 +17,26 @@ use crate::persistence::settings::GlobalSettings;
 use crate::ui::palette::{Palette, get_palette};
 use std::path::PathBuf;
 use std::collections::{HashSet, HashMap};
-use chrono::{Local, Utc};
+use chrono::{Local, Utc, TimeZone};
+
+fn format_duration(seconds: i64) -> String {
+    let mut s = seconds.abs();
+    let days = s / 86400;
+    s %= 86400;
+    let hours = s / 3600;
+    s %= 3600;
+    let minutes = s / 60;
+    let secs = s % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 { parts.push(format!("{}d", days)); }
+    if hours > 0 { parts.push(format!("{}h", hours)); }
+    if minutes > 0 { parts.push(format!("{}m", minutes)); }
+    if secs > 0 || parts.is_empty() { parts.push(format!("{}s", secs)); }
+
+    let joined = parts.join(" ");
+    if seconds < 0 { format!("-{}", joined) } else { joined }
+}
 
 pub struct App {
     pub arrow:    ArrowSettings,
@@ -88,6 +107,96 @@ impl App {
         };
         app.init_main_menu_nodes();
         app
+    }
+
+    pub fn sync_managed_nodes(&mut self) {
+        let mut managed_ids: HashSet<usize> = self.nodes.iter().enumerate()
+            .filter(|(_, n)| n.managed.is_some())
+            .map(|(i, _)| i)
+            .collect();
+
+        // 1. Ensure all nodes have their managed groups/tags
+        let n = self.nodes.len();
+        for i in 0..n {
+            // Only process real nodes that have times
+            if self.nodes[i].managed.is_some() || self.nodes[i].times.is_empty() { continue; }
+            
+            let group_idx = if let Some(&g) = self.nodes[i].children.iter().find(|&&c| {
+                if c < self.nodes.len() {
+                    matches!(self.nodes[c].managed, Some(ManagedNodeType::TimeGroup))
+                } else { false }
+            }) {
+                managed_ids.remove(&g);
+                g
+            } else {
+                let new_idx = self.nodes.len();
+                let group = Node {
+                    label: "[Times]".to_string(),
+                    parent: Some(i),
+                    children: vec![],
+                    links: vec![],
+                    collapsed: false,
+                    row: usize::MAX,
+                    world_x: 0,
+                    world_y: 0,
+                    world_x_end: 0,
+                    tags: HashMap::new(),
+                    times: HashMap::new(),
+                    is_managed_note: false,
+                    managed: Some(ManagedNodeType::TimeGroup),
+                };
+                self.nodes.push(group);
+                self.nodes[i].children.push(new_idx);
+                new_idx
+            };
+
+            let keys: Vec<String> = self.nodes[i].times.keys().cloned().collect();
+            for key in keys {
+                let tag = self.nodes[i].times.get(&key).unwrap();
+                let label = if key == "duration" {
+                    format!("duration: {}", format_duration(tag.timestamp))
+                } else {
+                    let dt = Local.timestamp_opt(tag.timestamp, 0).unwrap();
+                    let fmt = if tag.pattern.is_some() { "%Y-%m-%d %H:%M (recurring)" } else { "%Y-%m-%d %H:%M" };
+                    format!("{}: {}", key, dt.format(fmt))
+                };
+
+                if let Some(&t) = self.nodes[group_idx].children.iter().find(|&&c| {
+                    if c < self.nodes.len() {
+                        if let Some(ManagedNodeType::TimeTag { key: k }) = &self.nodes[c].managed {
+                            k == &key
+                        } else { false }
+                    } else { false }
+                }) {
+                    managed_ids.remove(&t);
+                    self.nodes[t].label = label;
+                } else {
+                    let new_tag_idx = self.nodes.len();
+                    let tag_node = Node {
+                        label,
+                        parent: Some(group_idx),
+                        children: vec![],
+                        links: vec![],
+                        collapsed: false,
+                        row: usize::MAX,
+                        world_x: 0,
+                        world_y: 0,
+                        world_x_end: 0,
+                        tags: HashMap::new(),
+                        times: HashMap::new(),
+                        is_managed_note: false,
+                        managed: Some(ManagedNodeType::TimeTag { key }),
+                    };
+                    self.nodes.push(tag_node);
+                    self.nodes[group_idx].children.push(new_tag_idx);
+                }
+            }
+        }
+
+        // 2. Remove any managed nodes that were not reconciled (orphans)
+        if !managed_ids.is_empty() {
+            self.remove_nodes(&managed_ids);
+        }
     }
 
     pub fn push_undo(&mut self) {
@@ -175,6 +284,7 @@ impl App {
 
         self.status_message     = None;
         self.mode               = Mode::Canvas { state: CanvasState::Browse };
+        self.sync_managed_nodes();
     }
 
     /// Persist the current canvas state to `<project_path>/.filament/`.
@@ -271,6 +381,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
 
         // Add projects as children of "Open"
@@ -290,6 +401,7 @@ impl App {
                 tags: HashMap::new(),
                 times: HashMap::new(),
                 is_managed_note: false,
+                managed: None,
             });
             self.nodes[open_idx].children.push(child_idx);
         }
@@ -308,6 +420,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
 
         // 3. Root: Import
@@ -324,6 +437,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
 
         // 4. Root: Find
@@ -340,6 +454,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
 
         // 4. Root: Settings
@@ -357,6 +472,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
         
         // Add specific settings as children of "Settings"
@@ -374,6 +490,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
         self.nodes[settings_idx].children.push(path_idx);
 
@@ -391,6 +508,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
         self.nodes[settings_idx].children.push(user_idx);
 
@@ -409,6 +527,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
         self.nodes[settings_idx].children.push(themes_idx);
 
@@ -432,6 +551,7 @@ impl App {
                 tags: HashMap::new(),
                 times: HashMap::new(),
                 is_managed_note: false,
+                managed: None,
             });
             self.nodes[themes_idx].children.push(p_idx);
         }
@@ -450,6 +570,7 @@ impl App {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
     }
 
@@ -745,12 +866,14 @@ impl App {
                 if self.nodes[id].is_managed_note {
                     decoration_cols += 2;
                 }
-                for (key, tag) in &self.nodes[id].times {
-                    let mut val_width = if key == "duration" { 15 } else { 10 };
-                    if let Some(ref pattern) = tag.pattern {
-                        val_width += 3 + pattern.chars().count() as i32; // " (pattern)"
+                if self.nodes[id].collapsed {
+                    for (key, tag) in &self.nodes[id].times {
+                        let mut val_width = if key == "duration" { 15 } else { 10 };
+                        if let Some(ref pattern) = tag.pattern {
+                            val_width += 3 + pattern.chars().count() as i32; // " (pattern)"
+                        }
+                        decoration_cols += 4 + key.chars().count() as i32 + val_width; // " [key: value]"
                     }
-                    decoration_cols += 4 + key.chars().count() as i32 + val_width; // " [key: value]"
                 }
                 self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + decoration_cols;
             }
@@ -959,6 +1082,7 @@ mod tests {
                 tags: HashMap::new(),
                 times: HashMap::new(),
                 is_managed_note: false,
+                managed: None,
             }
         ];
 
@@ -995,6 +1119,7 @@ mod tests {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
         app.nodes.push(Node {
             label: "Child".to_string(),
@@ -1009,6 +1134,7 @@ mod tests {
             tags: HashMap::new(),
             times: HashMap::new(),
             is_managed_note: false,
+            managed: None,
         });
 
         app.recompute_layout();

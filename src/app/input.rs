@@ -6,6 +6,7 @@ impl App {
     /// `i` — insert new child under selected node.
     pub fn enter_insert(&mut self) {
         if !self.has_selection() { return; }
+        if self.nodes[self.selected].managed.is_some() { return; }
         self.mode = Mode::Input {
             action: InputAction::InsertChild { parent: self.selected },
             buf: String::new(), cursor: 0,
@@ -16,6 +17,7 @@ impl App {
     /// `e` — edit selected node's label; cursor starts at end.
     pub fn enter_edit(&mut self) {
         if !self.has_selection() { return; }
+        if self.nodes[self.selected].managed.is_some() { return; }
         let buf = self.nodes[self.selected].label.clone();
         let cursor = buf.len();
         self.mode = Mode::Input {
@@ -28,6 +30,7 @@ impl App {
     /// `E` — overwrite selected node's label; starts with empty buffer.
     pub fn enter_overwrite(&mut self) {
         if !self.has_selection() { return; }
+        if self.nodes[self.selected].managed.is_some() { return; }
         self.mode = Mode::Input {
             action: InputAction::Overwrite { node: self.selected },
             buf: String::new(), cursor: 0,
@@ -95,6 +98,7 @@ impl App {
                     tags: HashMap::new(),
                     times: HashMap::new(),
                     is_managed_note: false,
+                    managed: None,
                 });
                 self.nodes[parent].children.push(new_idx);
                 self.nodes[parent].collapsed = false;

@@ -25,6 +25,8 @@ impl App {
 
         if is_browse {
             if let Some(id) = self.node_near_cursor(self.cursor_x, self.cursor_y) {
+                // Cannot pick managed nodes
+                if self.nodes[id].managed.is_some() { return; }
                 self.push_undo();
                 let (ox, oy) = (self.nodes[id].world_x, self.nodes[id].world_y);
                 self.mode = Mode::Canvas {
@@ -130,6 +132,7 @@ impl App {
                 tags: HashMap::new(),
                 times: HashMap::new(),
                 is_managed_note: false,
+                managed: None,
             });
             self.selected = id;
             // Chain straight into insert-child so editing continues normally.
@@ -282,6 +285,7 @@ impl App {
                 };
 
                 self.nodes[id].times.insert(time_type, TimeTag { timestamp, pattern });
+                self.sync_managed_nodes();
 
                 self.mode = *previous;
                 self.save_project();
@@ -312,20 +316,11 @@ impl App {
         let id = self.selected;
         self.push_undo();
         if let Some(t) = time_type {
-            // This is actually for the 'x' clear logic if we want it general, 
-            // but the plan said 'x' clears the status in TagStatus. 
-            // In TagTime 'x' should probably clear the specific time tag? 
-            // Let's implement clearing.
             self.nodes[id].times.remove(t);
         } else {
-            // Clear ALL time tags? Or just go back?
-            // The main loop calls app.canvas_set_time(None) for 'x'.
-            // Let's make 'x' enter a 'Clear' mode or just clear all for now.
-            // Actually, the plan for 'TagTime' 'x' was 'app.canvas_set_time(None)'.
-            // I'll make it clear all time tags on the node.
             self.nodes[id].times.clear();
         }
-        
+        self.sync_managed_nodes();
         if let Some(prev) = previous {
             self.mode = *prev;
         } else {
@@ -405,6 +400,7 @@ impl App {
                 tags: HashMap::new(),
                 times: HashMap::new(),
                 is_managed_note: true,
+                managed: None,
             });
             self.nodes[parent_id].children.push(id);
             self.selected = id; // Focus the new note node
@@ -628,6 +624,7 @@ impl App {
                 tags: HashMap::new(),
                 times: HashMap::new(),
                 is_managed_note: false,
+                managed: None,
             });
             if let Some(p) = parent { nodes[p].children.push(id); }
             id
