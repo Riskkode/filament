@@ -11,6 +11,8 @@ pub enum Mode {
     ContextSwitcher { selected: usize, previous: Box<Mode> },
     /// Status Page / Query Centre.
     StatusPage { state: StatusPageState },
+    /// Archive Page / Notes Centre.
+    ArchivePage { state: ArchiveState, previous: Box<Mode> },
     /// Status tagging chord waiting for next key.
     TagStatus { previous: Box<Mode> },
     /// Time tagging chord waiting for next key.
@@ -19,6 +21,8 @@ pub enum Mode {
     TagTimeClear { previous: Box<Mode> },
     /// Time tagging: user is typing the date/time string.
     TimeInput { time_type: String, buf: String, cursor: usize, previous: Box<Mode> },
+    /// Note association: user is typing the note title.
+    NoteInput { buf: String, cursor: usize, previous: Box<Mode> },
     Help,
 }
 
@@ -29,6 +33,13 @@ pub enum StatusPageState {
     NewQueryLogic { name: String, buf: String, cursor: usize },
     EditQueryName { idx: usize, buf: String, cursor: usize },
     EditQueryLogic { idx: usize, name: String, buf: String, cursor: usize },
+}
+
+#[derive(Clone)]
+pub enum ArchiveState {
+    BrowseList { selected: usize },
+    EditTitle  { idx: usize, buf: String, cursor: usize },
+    EditContent { idx: usize, buf: String, cursor: usize },
 }
 
 #[derive(Clone)]

@@ -36,6 +36,7 @@ impl App {
                     world_x_end: 0,
                     tags:        node.tags.clone(),
                     times:       node.times.clone(),
+                    is_managed_note: node.is_managed_note,
                 });
             }
         }

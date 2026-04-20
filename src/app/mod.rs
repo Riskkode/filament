@@ -6,10 +6,11 @@ mod start_menu;
 mod reparent;
 pub mod query;
 
-pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
+pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
 
 use crate::models::node::Node;
 use crate::models::query::StatusQuery;
+use crate::models::archive_note::ArchiveNote;
 use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
@@ -23,6 +24,8 @@ pub struct App {
     pub nodes:    Vec<Node>,
     /// User defined queries for the Status page.
     pub queries:  Vec<StatusQuery>,
+    /// User defined notes for the Archive page.
+    pub notes:    Vec<ArchiveNote>,
     /// The node currently under (or nearest to) the world cursor.
     /// Valid only when `has_selection()` is true.
     pub selected: usize,
@@ -64,6 +67,7 @@ impl App {
             arrow:    ArrowSettings::default(),
             nodes:    vec![],
             queries:  vec![],
+            notes:    vec![],
             selected: 0,
             camera_x: 0,
             camera_y: 0,
@@ -130,7 +134,7 @@ impl App {
     /// `<base>/.filament/` and applies the state to `self`.
     pub fn load_project(&mut self, base: &std::path::Path) {
         use crate::db::connection;
-        use crate::repositories::{node_repository, query_repository};
+        use crate::repositories::{node_repository, query_repository, note_repository};
 
         let settings = match ProjectSettings::load(base) {
             Ok(s) => s,
@@ -149,6 +153,7 @@ impl App {
         };
 
         self.queries = query_repository::load_queries(&conn).unwrap_or_default();
+        self.notes   = note_repository::load_notes(&conn).unwrap_or_default();
         self.nodes    = nodes;
         self.camera_x = settings.view.camera_x;
         self.camera_y = settings.view.camera_y;
@@ -176,7 +181,7 @@ impl App {
     /// Silent no-op when no project is open.
     pub fn save_project(&mut self) {
         use crate::db::connection;
-        use crate::repositories::{node_repository, query_repository};
+        use crate::repositories::{node_repository, query_repository, note_repository};
 
         let Some(base) = &self.project_path else { return };
 
@@ -192,6 +197,7 @@ impl App {
         };
 
         let _ = query_repository::save_queries(&conn, &self.queries);
+        let _ = note_repository::save_notes(&conn, &self.notes);
         
         // Save to history too
         let _ = node_repository::push_history(&conn, &self.nodes);
@@ -264,6 +270,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
 
         // Add projects as children of "Open"
@@ -282,6 +289,7 @@ impl App {
                 world_x_end: 0,
                 tags: HashMap::new(),
                 times: HashMap::new(),
+                is_managed_note: false,
             });
             self.nodes[open_idx].children.push(child_idx);
         }
@@ -299,6 +307,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
 
         // 3. Root: Import
@@ -314,6 +323,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
 
         // 4. Root: Find
@@ -329,6 +339,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
 
         // 4. Root: Settings
@@ -345,6 +356,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
         
         // Add specific settings as children of "Settings"
@@ -361,6 +373,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
         self.nodes[settings_idx].children.push(path_idx);
 
@@ -377,6 +390,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
         self.nodes[settings_idx].children.push(user_idx);
 
@@ -394,6 +408,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
         self.nodes[settings_idx].children.push(themes_idx);
 
@@ -416,6 +431,7 @@ impl App {
                 world_x_end: 0,
                 tags: HashMap::new(),
                 times: HashMap::new(),
+                is_managed_note: false,
             });
             self.nodes[themes_idx].children.push(p_idx);
         }
@@ -433,6 +449,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
     }
 
@@ -479,6 +496,176 @@ impl App {
             .filter(|(_, n)| crate::app::query::evaluate(logic, n))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    // ── Archive ──────────────────────────────────────────────────────────────
+
+    pub fn archive_add_note(&mut self, title: String, content: String) {
+        self.notes.push(ArchiveNote { id: None, title, content });
+        self.save_project();
+    }
+
+    pub fn archive_remove_note(&mut self, idx: usize) {
+        if idx < self.notes.len() {
+            self.notes.remove(idx);
+            self.save_project();
+        }
+    }
+
+    pub fn archive_update_note(&mut self, idx: usize, title: String, content: String) {
+        if idx < self.notes.len() {
+            self.notes[idx].title = title;
+            self.notes[idx].content = content;
+            self.save_project();
+        }
+    }
+
+    pub fn archive_nav(&mut self, delta: i32) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if self.notes.is_empty() { return; }
+            let next = (selected as i32 + delta).rem_euclid(self.notes.len() as i32) as usize;
+            self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: next }, previous: Box::new(self.mode.clone()) };
+        }
+    }
+
+    pub fn archive_new_note(&mut self) {
+        let idx = self.notes.len();
+        self.notes.push(ArchiveNote { id: None, title: "New Note".to_string(), content: String::new() });
+        self.mode = Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf: "New Note".to_string(), cursor: 8 }, previous: Box::new(self.mode.clone()) };
+        self.save_project();
+    }
+
+    pub fn archive_delete_note(&mut self) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if selected < self.notes.len() {
+                self.notes.remove(selected);
+                let next = if self.notes.is_empty() { 0 } else { selected.min(self.notes.len() - 1) };
+                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: next }, previous: Box::new(self.mode.clone()) };
+                self.save_project();
+            }
+        }
+    }
+
+    pub fn archive_enter_editor(&mut self) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if let Some(note) = self.notes.get(selected) {
+                self.mode = Mode::ArchivePage { state: ArchiveState::EditContent { idx: selected, buf: note.content.clone(), cursor: note.content.len() }, previous: Box::new(self.mode.clone()) };
+            }
+        }
+    }
+
+    pub fn archive_edit_title(&mut self) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if let Some(note) = self.notes.get(selected) {
+                self.mode = Mode::ArchivePage { state: ArchiveState::EditTitle { idx: selected, buf: note.title.clone(), cursor: note.title.len() }, previous: Box::new(self.mode.clone()) };
+            }
+        }
+    }
+
+    pub fn archive_editor_char(&mut self, c: char) {
+        if let Mode::ArchivePage { state: ref mut s, .. } = self.mode {
+            match s {
+                ArchiveState::EditTitle { buf, cursor, .. } | ArchiveState::EditContent { buf, cursor, .. } => {
+                    buf.insert(*cursor, c);
+                    *cursor += c.len_utf8();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn archive_editor_backspace(&mut self) {
+        if let Mode::ArchivePage { state: ref mut s, .. } = self.mode {
+            match s {
+                ArchiveState::EditTitle { buf, cursor, .. } | ArchiveState::EditContent { buf, cursor, .. } => {
+                    if *cursor > 0 {
+                        let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                        buf.drain(prev..*cursor);
+                        *cursor = prev;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn archive_editor_confirm(&mut self) {
+        match self.mode.clone() {
+            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, .. } => {
+                let index = idx;
+                let title = buf;
+                if index < self.notes.len() {
+                    self.notes[index].title = title;
+                } else {
+                    self.notes.push(ArchiveNote { id: None, title, content: String::new() });
+                }
+                self.save_project();
+                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
+            }
+            Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, .. } => {
+                if idx < self.notes.len() {
+                    self.notes[idx].content = buf;
+                    self.save_project();
+                }
+                // Enter stays in editor but adds newline?
+                // The requirement says: "Enter (newline)"
+                // So I should just insert a newline if in EditContent.
+                // Wait, if I handle Enter as newline, how do I exit? "Esc (back to list)".
+                // OK, so Enter in EditContent is just a character.
+                self.archive_editor_char('\n');
+            }
+            _ => {}
+        }
+    }
+
+    pub fn archive_editor_save_and_exit(&mut self) {
+        match self.mode.clone() {
+            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, .. } => {
+                let index = idx;
+                let title = buf;
+                if index < self.notes.len() {
+                    self.notes[index].title = title;
+                } else {
+                    self.notes.push(ArchiveNote { id: None, title, content: String::new() });
+                }
+                self.save_project();
+                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
+            }
+            Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, .. } => {
+                let index = idx;
+                let content = buf;
+                if let Some(note) = self.notes.get_mut(index) {
+                    note.content = content;
+                    self.save_project();
+                }
+                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
+            }
+            _ => {}
+        }
+    }
+
+    pub fn archive_jump_at(&mut self, canvas_w: u16, canvas_h: u16) {
+        let content = match &self.mode {
+            Mode::ArchivePage { state: ArchiveState::EditContent { buf, .. }, .. } => buf.clone(),
+            Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } => {
+                self.notes.get(*selected).map(|n| n.content.clone()).unwrap_or_default()
+            }
+            _ => return,
+        };
+
+        // Find the last @mention before the cursor or just any @mention
+        // For simplicity, let's look for @ followed by alphanumeric
+        if let Some(at_idx) = content.rfind('@') {
+            let rest = &content[at_idx+1..];
+            let name = rest.split_whitespace().next().unwrap_or("")
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ' ');
+            
+            if let Some(node_idx) = self.nodes.iter().position(|n| n.label == name) {
+                self.selected = node_idx;
+                self.center_on_selected(canvas_w, canvas_h);
+                self.mode = Mode::Canvas { state: CanvasState::Browse };
+            }
+        }
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────
@@ -553,6 +740,9 @@ impl App {
                     decoration_cols += 5 + self.nodes[id].children.len().to_string().len() as i32;
                 }
                 if self.nodes[id].tags.contains_key("status") {
+                    decoration_cols += 2;
+                }
+                if self.nodes[id].is_managed_note {
                     decoration_cols += 2;
                 }
                 for (key, tag) in &self.nodes[id].times {
@@ -768,6 +958,7 @@ mod tests {
                 world_x_end: 30,
                 tags: HashMap::new(),
                 times: HashMap::new(),
+                is_managed_note: false,
             }
         ];
 
@@ -803,6 +994,7 @@ mod tests {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
         app.nodes.push(Node {
             label: "Child".to_string(),
@@ -816,6 +1008,7 @@ mod tests {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
 
         app.recompute_layout();

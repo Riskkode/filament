@@ -25,13 +25,14 @@ pub fn open(path: &Path) -> Result<Connection> {
 
     conn.execute_batch("
         CREATE TABLE IF NOT EXISTS nodes (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            label     TEXT    NOT NULL,
-            parent_id INTEGER REFERENCES nodes(id),
-            sort_key  INTEGER NOT NULL DEFAULT 0,
-            collapsed INTEGER NOT NULL DEFAULT 0,
-            world_x   INTEGER NOT NULL DEFAULT 0,
-            world_y   INTEGER NOT NULL DEFAULT 0
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            label            TEXT    NOT NULL,
+            parent_id        INTEGER REFERENCES nodes(id),
+            sort_key         INTEGER NOT NULL DEFAULT 0,
+            collapsed        INTEGER NOT NULL DEFAULT 0,
+            world_x          INTEGER NOT NULL DEFAULT 0,
+            world_y          INTEGER NOT NULL DEFAULT 0,
+            is_managed_note  INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS links (
@@ -66,6 +67,12 @@ pub fn open(path: &Path) -> Result<Connection> {
             name  TEXT NOT NULL,
             logic TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS notes (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            title   TEXT NOT NULL UNIQUE,
+            content TEXT NOT NULL
+        );
     ")?;
 
     // Migration: Add time_pattern column if it doesn't exist.
@@ -75,6 +82,14 @@ pub fn open(path: &Path) -> Result<Connection> {
     ).unwrap_or(0);
     if has_pattern == 0 {
         let _ = conn.execute("ALTER TABLE node_times ADD COLUMN time_pattern TEXT", []);
+    }
+
+    let has_managed: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name='is_managed_note'", 
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if has_managed == 0 {
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN is_managed_note INTEGER NOT NULL DEFAULT 0", []);
     }
 
     Ok(conn)

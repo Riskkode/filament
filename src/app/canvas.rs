@@ -1,5 +1,7 @@
-use super::{App, CanvasState, InputAction, Mode, StatusPageState, move_cursor_in_buf};
+use super::{App, CanvasState, InputAction, Mode, StatusPageState, ArchiveState, move_cursor_in_buf};
 use crate::models::node::{Node, TimeTag};
+use crate::models::archive_note::ArchiveNote;
+
 use std::collections::HashMap;
 use chrono::{Local, Utc};
 use chrono_english::{parse_date_string, Dialect};
@@ -127,6 +129,7 @@ impl App {
                 world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
                 tags: HashMap::new(),
                 times: HashMap::new(),
+                is_managed_note: false,
             });
             self.selected = id;
             // Chain straight into insert-child so editing continues normally.
@@ -331,6 +334,106 @@ impl App {
         self.save_project();
     }
 
+    /// `n` — enter Note association state from the currently selected node.
+    pub fn canvas_start_note_association(&mut self) {
+        if !self.has_selection() { return; }
+        // We always start a fresh buffer for a NEW managed child note.
+        self.mode = Mode::NoteInput {
+            buf: String::new(),
+            cursor: 0,
+            previous: Box::new(self.mode.clone()),
+        };
+    }
+
+    pub fn canvas_note_char(&mut self, c: char) {
+        if let Mode::NoteInput { ref mut buf, ref mut cursor, .. } = self.mode {
+            buf.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+    }
+
+    pub fn canvas_note_backspace(&mut self) {
+        if let Mode::NoteInput { ref mut buf, ref mut cursor, .. } = self.mode {
+            if *cursor > 0 {
+                let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                buf.drain(prev..*cursor);
+                *cursor = prev;
+            }
+        }
+    }
+
+    pub fn canvas_note_move_cursor(&mut self, delta: i32) {
+        if let Mode::NoteInput { ref buf, ref mut cursor, .. } = self.mode {
+            move_cursor_in_buf(buf, cursor, delta);
+        }
+    }
+
+    pub fn canvas_confirm_note(&mut self) {
+        let (buf, previous) = match &self.mode {
+            Mode::NoteInput { buf, previous, .. } => (buf.clone(), previous.clone()),
+            _ => return,
+        };
+
+        if !self.has_selection() {
+            self.mode = *previous;
+            return;
+        }
+
+        let parent_id = self.selected;
+        let trimmed = buf.trim();
+        if !trimmed.is_empty() {
+            self.push_undo();
+            let note_title = trimmed.to_string();
+            
+            // 1. Ensure note exists in archive
+            if !self.notes.iter().any(|n| n.title == note_title) {
+                self.notes.push(ArchiveNote { id: None, title: note_title.clone(), content: String::new() });
+            }
+
+            // 2. Create managed child node
+            let id = self.nodes.len();
+            self.nodes.push(Node {
+                label: note_title,
+                parent: Some(parent_id),
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: usize::MAX,
+                world_x: 0,
+                world_y: 0,
+                world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: true,
+            });
+            self.nodes[parent_id].children.push(id);
+            self.selected = id; // Focus the new note node
+        }
+        
+        self.mode = *previous;
+        self.save_project();
+        self.recompute_layout();
+    }
+
+    pub fn canvas_open_note(&mut self) {
+        if !self.has_selection() { return; }
+        let id = self.selected;
+        if self.nodes[id].is_managed_note {
+            let title = &self.nodes[id].label;
+            if let Some(idx) = self.notes.iter().position(|n| n.title == *title) {
+                let note = &self.notes[idx];
+                self.mode = Mode::ArchivePage { 
+                    state: ArchiveState::EditContent { 
+                        idx, 
+                        buf: note.content.clone(), 
+                        cursor: note.content.len() 
+                    },
+                    previous: Box::new(self.mode.clone())
+                };
+            }
+        }
+    }
+
     /// Enter — toggle the link between origin and the node nearest the cursor.
     /// Creates the link if absent, removes it if already present.
     /// Does nothing if the cursor is on the origin itself or empty space.
@@ -524,6 +627,7 @@ impl App {
                 world_x_end: 0,
                 tags: HashMap::new(),
                 times: HashMap::new(),
+                is_managed_note: false,
             });
             if let Some(p) = parent { nodes[p].children.push(id); }
             id

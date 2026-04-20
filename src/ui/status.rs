@@ -132,46 +132,8 @@ pub fn draw_status_page(
         if let Mode::ContextSwitcher { .. } = &app.mode {
             crate::ui::draw::draw_context_switcher(frame, area, app);
         }
-        
-        // Render text input overlays for query editing
-        match &app.mode {
-            Mode::StatusPage { state: StatusPageState::NewQueryName { buf, cursor } } => {
-                draw_query_prompt(frame, inner, " name: ", buf, *cursor, &app.palette);
-            }
-            Mode::StatusPage { state: StatusPageState::NewQueryLogic { name: _, buf, cursor } } => {
-                draw_query_prompt(frame, inner, " query: ", buf, *cursor, &app.palette);
-            }
-            _ => {}
-        }
     })?;
     Ok(())
-}
-
-fn draw_query_prompt(frame: &mut Frame, area: Rect, prefix: &str, buf: &str, cursor: usize, pal: &Palette) {
-    let width = 60u16;
-    let height = 3u16;
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    let popup_area = Rect { x, y, width, height };
-
-    let title = if prefix.contains("name") { " NEW GROUP NAME " } else { " QUERY LOGIC " };
-
-    frame.render_widget(ratatui::widgets::Clear, popup_area);
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .title(title)
-            .border_style(Style::default().fg(pal.insert)),
-        popup_area,
-    );
-
-    crate::ui::draw::render_input_line(
-        frame,
-        popup_area.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 }),
-        0, 0,
-        prefix, buf, cursor, pal, pal.insert
-    );
 }
 
 fn draw_statistics(frame: &mut Frame, area: Rect, app: &App) {

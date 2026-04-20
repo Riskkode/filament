@@ -1,4 +1,4 @@
-use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
+use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
 use crate::ui::palette::Palette;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
@@ -212,9 +212,14 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 Span::styled(prefix,             Style::default().fg(app.palette.prefix)),
                 Span::styled(format!("{} ", indicator), Style::default().fg(app.palette.dim)),
                 status_span,
-                Span::styled(node.label.clone(), label_style),
-                Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)),
             ];
+
+            if node.is_managed_note {
+                spans.push(Span::styled("🗒 ", Style::default().fg(app.palette.insert)));
+            }
+
+            spans.push(Span::styled(node.label.clone(), label_style));
+            spans.push(Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)));
 
             // Render time tags
             let mut time_keys: Vec<_> = node.times.keys().cloned().collect();
@@ -368,6 +373,26 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             draw_context_switcher(frame, area, app);
         }
 
+        // ── Note Preview (PiP) ────────────────────────────────────────────────
+        if app.has_selection() {
+            let selected_node = &app.nodes[app.selected];
+            let note_to_show = if selected_node.is_managed_note {
+                app.notes.iter().find(|n| n.title == selected_node.label)
+            } else {
+                // If it's a regular node, maybe show the first linked note child if it has one?
+                // The user said: "view the notes with a simple pop up box that appears over the filaments"
+                // Let's look for any child that is a managed note.
+                selected_node.children.iter()
+                    .map(|&cid| &app.nodes[cid])
+                    .find(|n| n.is_managed_note)
+                    .and_then(|mn| app.notes.iter().find(|n| n.title == mn.label))
+            };
+
+            if let Some(note) = note_to_show {
+                draw_note_preview(frame, area, note, &app.palette);
+            }
+        }
+
         // ── Status bar ────────────────────────────────────────────────────────
         let status = build_status(app);
         frame.render_widget(
@@ -400,12 +425,13 @@ pub(crate) fn draw_context_switcher(frame: &mut ratatui::Frame, area: Rect, app:
     let options = [
         ("f", "Filaments", 0),
         ("s", "Status",    1),
+        ("a", "Archive",   2),
     ];
 
     let list_area = popup_area.inner(ratatui::layout::Margin { horizontal: 2, vertical: 1 });
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)])
         .split(list_area);
 
     for (i, (key, label, idx)) in options.iter().enumerate() {
@@ -423,6 +449,34 @@ pub(crate) fn draw_context_switcher(frame: &mut ratatui::Frame, area: Rect, app:
             chunks[i],
         );
     }
+}
+
+fn draw_note_preview(frame: &mut ratatui::Frame, area: Rect, note: &crate::models::archive_note::ArchiveNote, pal: &Palette) {
+    let width = (area.width / 3).max(30).min(60);
+    let height = (area.height / 3).max(10).min(20);
+    
+    // Position bottom-right with some margin
+    let x = area.width.saturating_sub(width + 2);
+    let y = area.height.saturating_sub(height + 3);
+    let popup_area = Rect { x, y, width, height };
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(format!(" 🗒 {} ", note.title))
+            .border_style(Style::default().fg(pal.insert)),
+        popup_area,
+    );
+
+    let inner = popup_area.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+    frame.render_widget(
+        Paragraph::new(note.content.as_str())
+            .style(Style::default().fg(pal.node))
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+        inner,
+    );
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -562,13 +616,23 @@ pub fn build_status(app: &App) -> String {
         Mode::Reparent { subject, cursor, .. } =>
             format!(" reparenting \"{}\" → child of \"{}\" ", app.nodes[*subject].label, app.nodes[*cursor].label),
         Mode::ContextSwitcher { selected, .. } =>
-            format!(" Context: {} │ Space:toggle  hjkl:navigate  Enter:confirm  shortcuts: f s ", if *selected == 0 { "Filaments" } else { "Status" }),
+            format!(" Context: {} │ Space:toggle  hjkl:navigate  Enter:confirm  shortcuts: f s a ", if *selected == 0 { "Filaments" } else if *selected == 1 { "Status" } else { "Archive" }),
         Mode::StatusPage { state: sps } => {
             match sps {
-                StatusPageState::Browse { .. } => " Status Page │ n:new group  x:delete last  Space:context switcher ".to_string(),
+                StatusPageState::Browse { .. } => " Status Page │ n:new group  x:delete node  X:delete group  Space:context switcher ".to_string(),
                 StatusPageState::NewQueryName { .. } => " enter group name  Enter:next  Esc:cancel ".to_string(),
                 StatusPageState::NewQueryLogic { .. } => " enter query (e.g. status:todo AND deadline < tomorrow)  Enter:save  Esc:cancel ".to_string(),
                 _ => " Status Page ".to_string(),
+            }
+        }
+        Mode::ArchivePage { state: as_state, .. } => {
+            match as_state {
+                ArchiveState::BrowseList { selected } => {
+                    let note = app.notes.get(*selected).map(|n| n.title.as_str()).unwrap_or("none");
+                    format!(" Archive │ selected: \"{}\" │ n:new  e:edit  x:delete  Space:switcher ", note)
+                }
+                ArchiveState::EditTitle { buf, .. } => format!(" editing title: \"{}\" ", buf),
+                ArchiveState::EditContent { .. } => " editing content │ Esc:save & exit │ Ctrl-g: jump to @mention ".to_string(),
             }
         }
         Mode::Canvas { state: CanvasState::Menu | CanvasState::MenuIncoming | CanvasState::MenuOutgoing } =>
@@ -613,6 +677,8 @@ pub fn build_status(app: &App) -> String {
             " clear time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back ".to_string(),
         Mode::TimeInput { time_type, buf, .. } =>
             format!(" enter {} │ \"{}\" ", time_type, buf),
+        Mode::NoteInput { buf, .. } =>
+            format!(" enter note title │ \"{}\" ", buf),
         Mode::Help =>
             " Browsing Help tree │ hjkl:navigate  z:toggle  Esc/?:close ".to_string(),
     }

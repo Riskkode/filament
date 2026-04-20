@@ -13,7 +13,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 
-use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
+use app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
 use ui::draw::draw;
 
 fn main() -> io::Result<()> {
@@ -27,18 +27,24 @@ fn main() -> io::Result<()> {
         fn is_status_background(mode: &Mode) -> bool {
             match mode {
                 Mode::StatusPage { .. } => true,
+                Mode::ArchivePage { .. } => true,
                 Mode::ContextSwitcher { previous, .. }
                 | Mode::Input { previous, .. }
                 | Mode::TagStatus { previous, .. }
                 | Mode::TagTime { previous, .. }
                 | Mode::TagTimeClear { previous, .. }
-                | Mode::TimeInput { previous, .. } => is_status_background(previous),
+                | Mode::TimeInput { previous, .. }
+                | Mode::NoteInput { previous, .. } => is_status_background(previous),
                 _ => false,
             }
         }
 
         if is_status_background(&app.mode) {
-            ui::status::draw_status_page(&mut terminal, &mut app)?;
+            if matches!(app.mode, Mode::ArchivePage { .. }) || (if let Mode::ContextSwitcher { previous, .. } = &app.mode { matches!(previous.as_ref(), Mode::ArchivePage { .. }) } else { false }) {
+                ui::archive::draw_archive_page(&mut terminal, &mut app)?;
+            } else {
+                ui::status::draw_status_page(&mut terminal, &mut app)?;
+            }
         } else {
             draw(&mut terminal, &mut app)?;
         }
@@ -149,6 +155,15 @@ fn main() -> io::Result<()> {
                     KeyCode::Char(c) => app.canvas_time_char(c),
                     _ => {}
                 },
+                Mode::NoteInput { ref previous, .. } => match key.code {
+                    KeyCode::Enter => app.canvas_confirm_note(),
+                    KeyCode::Esc   => app.mode = *previous.clone(),
+                    KeyCode::Backspace => app.canvas_note_backspace(),
+                    KeyCode::Left  => app.canvas_note_move_cursor(-1),
+                    KeyCode::Right => app.canvas_note_move_cursor(1),
+                    KeyCode::Char(c) => app.canvas_note_char(c),
+                    _ => {}
+                },
 
                 // ── Reparent ─────────────────────────────────────────────────
                 Mode::Reparent { .. } => {
@@ -169,11 +184,13 @@ fn main() -> io::Result<()> {
                     match key.code {
                         KeyCode::Char('f') => app.mode = Mode::Canvas { state: CanvasState::Browse },
                         KeyCode::Char('s') => app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } },
+                        KeyCode::Char('a') => app.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: 0 }, previous: previous.clone() },
                         KeyCode::Char('h') | KeyCode::Left  => app.mode = Mode::ContextSwitcher { selected: selected.saturating_sub(1), previous: previous.clone() },
-                        KeyCode::Char('l') | KeyCode::Right => app.mode = Mode::ContextSwitcher { selected: (selected + 1).min(1), previous: previous.clone() },
+                        KeyCode::Char('l') | KeyCode::Right => app.mode = Mode::ContextSwitcher { selected: (selected + 1).min(2), previous: previous.clone() },
                         KeyCode::Enter => {
                             if selected == 0 { app.mode = Mode::Canvas { state: CanvasState::Browse }; }
-                            else { app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } }; }
+                            else if selected == 1 { app.mode = Mode::StatusPage { state: StatusPageState::Browse { group_idx: 0, item_idx: None } }; }
+                            else { app.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: 0 }, previous: previous.clone() }; }
                         }
                         KeyCode::Esc | KeyCode::Char(' ') => app.mode = *previous.clone(),
                         _ => {}
@@ -314,6 +331,45 @@ fn main() -> io::Result<()> {
                     }
                 }
 
+                Mode::ArchivePage { state: ref as_state, ref previous } => {
+                    match as_state {
+                        ArchiveState::BrowseList { .. } => {
+                            match key.code {
+                                KeyCode::Char(' ') => app.mode = Mode::ContextSwitcher { selected: 2, previous: Box::new(app.mode.clone()) },
+                                KeyCode::Char('q') => app.quit_to_main_menu(),
+                                KeyCode::Char('n') => app.archive_new_note(),
+                                KeyCode::Char('x') => app.archive_delete_note(),
+                                KeyCode::Char('j') | KeyCode::Down => app.archive_nav(1),
+                                KeyCode::Char('k') | KeyCode::Up   => app.archive_nav(-1),
+                                KeyCode::Enter => app.archive_enter_editor(),
+                                KeyCode::Char('e') => app.archive_edit_title(),
+                                KeyCode::Char('@') => app.archive_jump_at(canvas_w as u16, canvas_h as u16),
+                                KeyCode::Esc => app.mode = *previous.clone(),
+                                _ => {}
+                            }
+                        }
+                        ArchiveState::EditTitle { .. } => {
+                            match key.code {
+                                KeyCode::Enter => app.archive_editor_confirm(),
+                                KeyCode::Esc   => app.archive_editor_save_and_exit(),
+                                KeyCode::Backspace => app.archive_editor_backspace(),
+                                KeyCode::Char(c) => app.archive_editor_char(c),
+                                _ => {}
+                            }
+                        }
+                        ArchiveState::EditContent { .. } => {
+                            match (key.modifiers, key.code) {
+                                (KeyModifiers::CONTROL, KeyCode::Char('g')) => app.archive_jump_at(canvas_w as u16, canvas_h as u16),
+                                (_, KeyCode::Enter) => app.archive_editor_confirm(),
+                                (_, KeyCode::Esc)   => app.archive_editor_save_and_exit(),
+                                (_, KeyCode::Backspace) => app.archive_editor_backspace(),
+                                (_, KeyCode::Char(c)) => app.archive_editor_char(c),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
                 // ── Help ─────────────────────────────────────────────────────
                 Mode::Help => {
                     match (key.modifiers, key.code) {
@@ -434,6 +490,13 @@ fn main() -> io::Result<()> {
                                 break;
                             }
 
+                            // ── Camera ────────────────────────────────────────
+                            (KeyModifiers::ALT, KeyCode::Enter) => app.canvas_open_note(),
+                            (_, KeyCode::Char('c')) => app.center_on_selected(canvas_w, canvas_h as u16),
+
+                            (KeyModifiers::NONE, KeyCode::Tab)   => app.canvas_jump_link(1, canvas_w, canvas_h as u16),
+                            (KeyModifiers::SHIFT, KeyCode::BackTab) => app.canvas_jump_link(-1, canvas_w, canvas_h as u16),
+
                             // ── Link confirmation / cancellation ──────────────
                             (_, KeyCode::Enter) => { app.canvas_confirm_link(); }
                             (_, KeyCode::Esc)   => {
@@ -468,12 +531,12 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('f'))  => app.canvas_start_link(),
                             (KeyModifiers::NONE, KeyCode::Char('s'))  => app.canvas_start_status_tagging(),
                             (KeyModifiers::NONE, KeyCode::Char('t'))  => app.canvas_start_time_tagging(),
+                            (KeyModifiers::NONE, KeyCode::Char('n'))  => app.canvas_start_note_association(),
                             (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
                             (KeyModifiers::NONE, KeyCode::Char(' '))  => app.mode = Mode::ContextSwitcher { selected: 0, previous: Box::new(app.mode.clone()) },
                             (KeyModifiers::NONE, KeyCode::Char('u'))  => app.undo(),
                             (KeyModifiers::NONE, KeyCode::Char('?'))  => app.canvas_start_help(),
                             (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
-
                                 app.mode = Mode::Canvas { state: CanvasState::Menu };
                             }
 
@@ -484,14 +547,7 @@ fn main() -> io::Result<()> {
                                 app.toggle_collapse(); app.recompute_layout(); app.save_project();
                             }
 
-                            // ── Camera ────────────────────────────────────────
-                            (_, KeyCode::Char('c')) => app.center_on_selected(canvas_w, canvas_h as u16),
-
-                            (KeyModifiers::NONE, KeyCode::Tab)   => app.canvas_jump_link(1, canvas_w, canvas_h as u16),
-                            (KeyModifiers::SHIFT, KeyCode::BackTab) => app.canvas_jump_link(-1, canvas_w, canvas_h as u16),
-
                             _ => {}
-
                         }
                     }
                 }

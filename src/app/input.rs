@@ -94,6 +94,7 @@ impl App {
                     collapsed: false, row: usize::MAX, world_x: 0, world_y: 0, world_x_end: 0,
                     tags: HashMap::new(),
                     times: HashMap::new(),
+                    is_managed_note: false,
                 });
                 self.nodes[parent].children.push(new_idx);
                 self.nodes[parent].collapsed = false;

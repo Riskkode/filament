@@ -295,6 +295,7 @@ impl App {
             world_x_end: 0,
             tags: HashMap::new(),
             times: HashMap::new(),
+            is_managed_note: false,
         });
         self.nodes[new_node_idx].children.push(child_idx);
         self.nodes[new_node_idx].collapsed = false;

@@ -1,4 +1,4 @@
-use crate::app::{CanvasState, InputAction, Mode, StartMenuState, StatusPageState};
+use crate::app::{CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
 use crate::ui::palette::Palette;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -20,9 +20,11 @@ pub fn mode_color(pal: &Palette, mode: &Mode) -> Color {
         Mode::TagTime { .. }                  => pal.edit,
         Mode::TagTimeClear { .. }             => pal.edit,
         Mode::TimeInput { .. }                => pal.edit,
+        Mode::NoteInput { .. }                => pal.insert,
         Mode::Canvas { .. }                                            => pal.canvas,
         Mode::ContextSwitcher { .. }                                   => pal.edit,
         Mode::StatusPage { .. }                                        => pal.canvas,
+        Mode::ArchivePage { .. }                                       => pal.canvas,
         Mode::Help                                                     => pal.pick,
     }
 }
@@ -51,13 +53,26 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
             match sps {
                 StatusPageState::NewQueryName { .. } => modal_title(
                     pal, "NEW GROUP", pal.insert,
-                    "enter group name  Enter:confirm  Esc:cancel".to_string(),
+                    "enter group name  Enter:next  Esc:cancel".to_string(),
                 ),
                 StatusPageState::NewQueryLogic { .. } => modal_title(
                     pal, "QUERY LOGIC", pal.insert,
                     "enter logic (e.g. status:todo)  Enter:save  Esc:cancel".to_string(),
                 ),
                 _ => status_page_title(pal),
+            }
+        }
+        Mode::ArchivePage { state, .. } => {
+            match state {
+                ArchiveState::EditTitle { .. } => modal_title(
+                    pal, "EDIT TITLE", pal.edit,
+                    "enter title  Enter:save  Esc:cancel".to_string(),
+                ),
+                ArchiveState::EditContent { .. } => modal_title(
+                    pal, "EDIT CONTENT", pal.edit,
+                    "enter content  Enter:newline  Esc:done".to_string(),
+                ),
+                _ => archive_page_title(pal),
             }
         }
         Mode::TagStatus { .. } => modal_title(
@@ -75,6 +90,10 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
         Mode::TimeInput { time_type, .. } => modal_title(
             pal, "TIME INPUT", pal.edit,
             format!("enter {}: tomorrow, friday, 2024-12-01  Enter:confirm  Esc:cancel", time_type),
+        ),
+        Mode::NoteInput { .. } => modal_title(
+            pal, "NOTE", pal.insert,
+            "enter note title  Enter:confirm  Esc:cancel".to_string(),
         ),
         Mode::Input { action: InputAction::InsertChild { .. }, .. } => modal_title(
             pal, "INSERT", pal.insert,
@@ -123,9 +142,8 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
         ),
         Mode::ContextSwitcher { .. } => modal_title(
             pal, "CONTEXT", pal.edit,
-            "hjkl:nav  Enter:confirm  shortcuts: f s  Space:cancel".to_string(),
+            "hjkl:nav  Enter:confirm  shortcuts: f s a  Space:cancel".to_string(),
         ),
-        _ => canvas_title(pal),
     }
 }
 
@@ -153,6 +171,19 @@ fn status_page_title(pal: &Palette) -> Line<'static> {
     ])
 }
 
+fn archive_page_title(pal: &Palette) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(" filament", Style::default().add_modifier(Modifier::BOLD)),
+        sep(),
+        Span::styled("Archive ", Style::default().fg(pal.canvas)),
+        sep(),
+        bracket(pal, "n", pal.insert), Span::styled(" new note  ",  pal.tinted(pal.insert)),
+        bracket(pal, "Enter", pal.edit), Span::styled(" edit  ",     pal.tinted(pal.edit)),
+        bracket(pal, "x", pal.pick),   Span::styled(" delete note  ", pal.tinted(pal.pick)),
+        bracket(pal, "j/k", pal.canvas), Span::styled(" navigate",   pal.tinted(pal.canvas)),
+    ])
+}
+
 /// Canvas (ground state): mode triggers + command keys.
 fn canvas_title(pal: &Palette) -> Line<'static> {
     Line::from(vec![
@@ -166,6 +197,7 @@ fn canvas_title(pal: &Palette) -> Line<'static> {
         bracket(pal, "f",   pal.link),     Span::styled(" link  ",    pal.tinted(pal.link)),
         bracket(pal, "s",   pal.edit),     Span::styled(" status  ",  pal.tinted(pal.edit)),
         bracket(pal, "t",   pal.edit),     Span::styled(" time  ",    pal.tinted(pal.edit)),
+        bracket(pal, "n",   pal.insert),   Span::styled(" note  ",    pal.tinted(pal.insert)),
         bracket(pal, "g",   pal.edit),     Span::styled(" goto  ",    pal.tinted(pal.edit)),
         bracket(pal, "?",   pal.pick),     Span::styled(" help",      pal.tinted(pal.pick)),
     ])

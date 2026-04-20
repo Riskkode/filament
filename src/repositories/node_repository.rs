@@ -14,6 +14,7 @@ struct DbRow {
     collapsed: bool,
     world_x:   i32,
     world_y:   i32,
+    is_managed_note: bool,
 }
 
 /// Load all nodes and links from the database, rebuilding the in-memory Vec.
@@ -22,7 +23,7 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
     // Load nodes ordered so parents always appear before children and siblings
     // are in their stored sort order.
     let mut stmt = conn.prepare(
-        "SELECT id, label, parent_id, sort_key, collapsed, world_x, world_y
+        "SELECT id, label, parent_id, sort_key, collapsed, world_x, world_y, is_managed_note
          FROM nodes
          ORDER BY COALESCE(parent_id, 0), sort_key"
     )?;
@@ -36,6 +37,7 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
             collapsed: row.get::<_, i32>(4)? != 0,
             world_x:   row.get(5)?,
             world_y:   row.get(6)?,
+            is_managed_note: row.get::<_, i32>(7)? != 0,
         })
     })?.collect::<Result<_>>()?;
 
@@ -56,6 +58,7 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
         world_x_end: 0,
         tags:      HashMap::new(),
         times:     HashMap::new(),
+        is_managed_note: r.is_managed_note,
     }).collect();
 
     // Build children lists (rows were ordered by parent_id, sort_key so
@@ -137,8 +140,8 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
             .unwrap_or(0) as i64;
 
         tx.execute(
-            "INSERT INTO nodes (label, parent_id, sort_key, collapsed, world_x, world_y)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO nodes (label, parent_id, sort_key, collapsed, world_x, world_y, is_managed_note)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 node.label,
                 parent_id,
@@ -146,6 +149,7 @@ pub fn save(conn: &mut Connection, nodes: &[Node]) -> Result<Vec<i64>> {
                 node.collapsed as i32,
                 node.world_x,
                 node.world_y,
+                node.is_managed_note as i32,
             ],
         )?;
         idx_to_id[i] = tx.last_insert_rowid();

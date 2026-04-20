@@ -29,4 +29,6 @@ pub struct Node {
     pub tags:      HashMap<String, String>,
     /// Time tags (e.g., "deadline" => TimeTag).
     pub times:     HashMap<String, TimeTag>,
+    /// If true, this node represents a link to an Archive note (label is the title).
+    pub is_managed_note: bool,
 }
