@@ -535,6 +535,7 @@ fn main() -> io::Result<()> {
                             (KeyModifiers::NONE, KeyCode::Char('g'))  => app.canvas_start_goto(),
                             (KeyModifiers::NONE, KeyCode::Char(' '))  => app.mode = Mode::ContextSwitcher { selected: 0, previous: Box::new(app.mode.clone()) },
                             (KeyModifiers::NONE, KeyCode::Char('u'))  => app.undo(),
+                            (KeyModifiers::NONE, KeyCode::Char('/'))  => { app.show_note_previews = !app.show_note_previews; app.save_project(); }
                             (KeyModifiers::NONE, KeyCode::Char('?'))  => app.canvas_start_help(),
                             (KeyModifiers::SHIFT, KeyCode::Char('F')) => {
                                 app.mode = Mode::Canvas { state: CanvasState::Menu };

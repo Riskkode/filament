@@ -638,9 +638,9 @@ impl App {
         add_help_node(&mut self.nodes, "Tab / S-Tab   : Cycle through outgoing links", Some(nav));
         add_help_node(&mut self.nodes, "c             : Center camera on selection", Some(nav));
         add_help_node(&mut self.nodes, "g             : Goto (fuzzy search nodes)", Some(nav));
+        add_help_node(&mut self.nodes, "/             : Toggle note previews", Some(nav));
 
-        let ops = add_help_node(&mut self.nodes, "Operations", Some(root));
-        add_help_node(&mut self.nodes, "i             : Insert new child", Some(ops));
+        let ops = add_help_node(&mut self.nodes, "Operations", Some(root));        add_help_node(&mut self.nodes, "i             : Insert new child", Some(ops));
         add_help_node(&mut self.nodes, "n             : New root node at cursor", Some(ops));
         add_help_node(&mut self.nodes, "e             : Edit label (append)", Some(ops));
         add_help_node(&mut self.nodes, "E (Shift)     : Edit label (overwrite)", Some(ops));

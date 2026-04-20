@@ -76,6 +76,7 @@ pub struct App {
     pub last_link_idx:    usize,
     /// Track previous mode for Help restoration.
     pub help_previous_mode: Option<Mode>,
+    pub show_note_previews: bool,
 }
 
 impl App {
@@ -104,6 +105,7 @@ impl App {
             last_link_origin:   None,
             last_link_idx:      0,
             help_previous_mode: None,
+            show_note_previews: true,
         };
         app.init_main_menu_nodes();
         app
@@ -268,6 +270,7 @@ impl App {
         self.camera_y = settings.view.camera_y;
         self.cursor_x = settings.view.cursor_x;
         self.cursor_y = settings.view.cursor_y;
+        self.show_note_previews = settings.view.show_note_previews;
         self.selected = id_to_idx.get(&settings.view.selected_db_id).copied().unwrap_or(0);
         self.arrow    = ArrowSettings {
             global:   settings.arrows.global,
@@ -323,6 +326,7 @@ impl App {
                 cursor_x:       self.cursor_x,
                 cursor_y:       self.cursor_y,
                 selected_db_id,
+                show_note_previews: self.show_note_previews,
             },
             arrows: crate::persistence::project::SavedArrows {
                 global:   self.arrow.global,

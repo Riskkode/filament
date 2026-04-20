@@ -381,22 +381,26 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
 
         // ── Note Preview (PiP) ────────────────────────────────────────────────
-        if app.has_selection() {
+        if app.has_selection() && app.show_note_previews {
             let selected_node = &app.nodes[app.selected];
-            let note_to_show = if selected_node.is_managed_note {
-                app.notes.iter().find(|n| n.title == selected_node.label)
+
+            let preview_height = (canvas.height / 3).max(10).min(20);
+            let max_notes = (canvas.height / preview_height) as usize;
+
+            let notes_to_show: Vec<_> = if selected_node.is_managed_note {
+                app.notes.iter().filter(|n| n.title == selected_node.label).take(max_notes).collect()
             } else {
-                // If it's a regular node, maybe show the first linked note child if it has one?
-                // The user said: "view the notes with a simple pop up box that appears over the filaments"
-                // Let's look for any child that is a managed note.
+                // If it's a regular node, show up to max_notes linked note children.
                 selected_node.children.iter()
                     .map(|&cid| &app.nodes[cid])
-                    .find(|n| n.is_managed_note)
-                    .and_then(|mn| app.notes.iter().find(|n| n.title == mn.label))
+                    .filter(|n| n.is_managed_note)
+                    .filter_map(|mn| app.notes.iter().find(|n| n.title == mn.label))
+                    .take(max_notes)
+                    .collect()
             };
 
-            if let Some(note) = note_to_show {
-                draw_note_preview(frame, area, note, &app.palette);
+            for (i, note) in notes_to_show.into_iter().enumerate() {
+                draw_note_preview(frame, canvas, note, &app.palette, i as u16);
             }
         }
 
@@ -458,13 +462,14 @@ pub(crate) fn draw_context_switcher(frame: &mut ratatui::Frame, area: Rect, app:
     }
 }
 
-fn draw_note_preview(frame: &mut ratatui::Frame, area: Rect, note: &crate::models::archive_note::ArchiveNote, pal: &Palette) {
-    let width = (area.width / 3).max(30).min(60);
-    let height = (area.height / 3).max(10).min(20);
+fn draw_note_preview(frame: &mut ratatui::Frame, canvas: Rect, note: &crate::models::archive_note::ArchiveNote, pal: &Palette, index: u16) {
+    let width = (canvas.width / 3).max(30).min(60);
+    let height = (canvas.height / 3).max(10).min(20);
     
-    // Position bottom-right with some margin
-    let x = area.width.saturating_sub(width + 2);
-    let y = area.height.saturating_sub(height + 3);
+    // Position bottom-right with some margin, stack upwards based on index
+    let x = canvas.x + canvas.width.saturating_sub(width);
+    let y = (canvas.y + canvas.height).saturating_sub(height * (index + 1));
+    
     let popup_area = Rect { x, y, width, height };
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
