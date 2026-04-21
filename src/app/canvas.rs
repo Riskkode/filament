@@ -462,18 +462,24 @@ impl App {
             let title = &self.nodes[id].label;
             if let Some(idx) = self.notes.iter().position(|n| n.title == *title) {
                 let note = &self.notes[idx];
-                self.mode = Mode::ArchivePage { 
-                    state: ArchiveState::EditContent { 
-                        idx, 
-                        buf: note.content.clone(), 
-                        cursor: note.content.len() 
-                    },
-                    previous: Box::new(self.mode.clone())
-                };
+                if note.note_type == crate::models::archive_note::NoteType::Reference {
+                    self.mode = Mode::ArchivePage {
+                        state: ArchiveState::BrowseDocument { note_idx: idx, doc_idx: 0 },
+                        previous: Box::new(self.mode.clone())
+                    };
+                } else {
+                    self.mode = Mode::ArchivePage {
+                        state: ArchiveState::EditContent {
+                            idx,
+                            buf: note.content.clone(),
+                            cursor: note.content.len()
+                        },
+                        previous: Box::new(self.mode.clone())
+                    };
+                }
             }
         }
     }
-
     /// Enter — toggle the link between origin and the node nearest the cursor.
     /// Creates the link if absent, removes it if already present.
     /// Does nothing if the cursor is on the origin itself or empty space.

@@ -38,6 +38,7 @@ pub enum StatusPageState {
 #[derive(Clone)]
 pub enum ArchiveState {
     BrowseList { selected: usize },
+    BrowseDocument { note_idx: usize, doc_idx: usize },
     EditTitle  { idx: usize, buf: String, cursor: usize },
     EditContent { idx: usize, buf: String, cursor: usize },
 }

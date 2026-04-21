@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Rect, Layout, Constraint, Direction},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, List, ListItem},
+    widgets::{Block, BorderType, Borders, Paragraph, List, ListItem, Wrap},
     Terminal,
 };
 use std::io;
@@ -44,13 +44,21 @@ pub fn draw_archive_page(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, 
         let right_area = chunks[1];
 
         // ── Left: Note List ──────────────────────────────────────────────────
-        let (selected_idx, is_editing_title, is_editing_content) = match &app.mode {
-            Mode::ArchivePage { state, .. } => match state {
-                ArchiveState::BrowseList { selected } => (*selected, false, false),
-                ArchiveState::EditTitle { idx, .. } => (*idx, true, false),
-                ArchiveState::EditContent { idx, .. } => (*idx, false, true),
+        let (selected_idx, is_editing_title, is_editing_content, is_browse_doc, editing_idx) = match &app.mode {
+            Mode::ArchivePage { state, previous } => match state {
+                ArchiveState::BrowseList { selected } => (*selected, false, false, false, None),
+                ArchiveState::BrowseDocument { note_idx, .. } => (*note_idx, false, false, true, None),
+                ArchiveState::EditTitle { idx, .. } => (*idx, true, false, false, None),
+                ArchiveState::EditContent { idx, .. } => {
+                    // Check if we came from a document view
+                    if let Mode::ArchivePage { state: ArchiveState::BrowseDocument { note_idx, .. }, .. } = &**previous {
+                        (*note_idx, false, true, true, Some(*idx))
+                    } else {
+                        (*idx, false, true, false, Some(*idx))
+                    }
+                }
             },
-            _ => (0, false, false),
+            _ => (0, false, false, false, None),
         };
 
         let items: Vec<ListItem> = app.notes.iter().enumerate().map(|(i, note)| {
@@ -86,14 +94,8 @@ pub fn draw_archive_page(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, 
             let content_area = editor_chunks[1];
             let footer_area = editor_chunks[2];
 
-            // Use concatenated document if it's a Reference Note and we are not in an explicit edit mode
             let is_ref = note.note_type == crate::models::archive_note::NoteType::Reference;
-            let combined_content = if is_ref && !is_editing_title && !is_editing_content {
-                app.build_concatenated_document(selected_idx)
-            } else {
-                note.content.clone()
-            };
-
+            
             // Title
             let title_text = if is_editing_title {
                 if let Mode::ArchivePage { state: ArchiveState::EditTitle { buf, cursor, .. }, .. } = &app.mode {
@@ -118,23 +120,69 @@ pub fn draw_archive_page(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, 
                 title_area,
             );
 
-            // Content
-            let content_lines = if is_editing_content {
-                if let Mode::ArchivePage { state: ArchiveState::EditContent { buf, cursor, .. }, .. } = &app.mode {
-                    render_editable_content(buf, *cursor, &app.palette, app.palette.edit)
+            // Content Area: Stack of boxes (Universal)
+            if !is_editing_title {
+                let elements = app.get_document_elements(selected_idx);
+                let current_doc_idx = if let Mode::ArchivePage { state: ArchiveState::BrowseDocument { doc_idx, .. }, .. } = &app.mode {
+                    Some(*doc_idx)
                 } else {
-                    combined_content.lines().map(Line::from).collect()
+                    None
+                };
+
+                // Simple layout for the stack
+                let mut constraints = Vec::new();
+                for _ in &elements {
+                    constraints.push(Constraint::Min(5));
+                }
+
+                let doc_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(constraints)
+                    .split(content_area);
+
+                for (i, el) in elements.iter().enumerate() {
+                    if i >= doc_chunks.len() { break; }
+                    let n = &app.notes[el.note_idx];
+                    let is_selected = current_doc_idx == Some(i);
+                    let is_being_edited = is_editing_content && Some(el.note_idx) == editing_idx;
+                    
+                    let prefix = "  ".repeat(el.depth.saturating_sub(1));
+                    let title = format!(" {}# {} ", prefix, n.title);
+                    
+                    let mut block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .title(title);
+                    
+                    if is_selected || is_being_edited {
+                        block = block.border_style(Style::default().fg(app.palette.selected));
+                    } else {
+                        block = block.border_style(Style::default().fg(app.palette.dim));
+                    }
+
+                    if is_being_edited {
+                        if let Mode::ArchivePage { state: ArchiveState::EditContent { buf, cursor, .. }, .. } = &app.mode {
+                            let content_lines = render_editable_content(buf, *cursor, &app.palette, app.palette.edit);
+                            let para = Paragraph::new(content_lines)
+                                .block(block)
+                                .wrap(Wrap { trim: false });
+                            frame.render_widget(para, doc_chunks[i]);
+                        }
+                    } else {
+                        let para = Paragraph::new(n.content.as_str())
+                            .block(block)
+                            .wrap(Wrap { trim: false });
+                        frame.render_widget(para, doc_chunks[i]);
+                    }
                 }
             } else {
-                combined_content.lines().map(Line::from).collect()
-            };
-
-            frame.render_widget(
-                Paragraph::new(content_lines)
-                    .block(Block::default()
-                        .title(if is_ref && !is_editing_content { " Document View (Concatenated) " } else { " Content " })),
-                content_area,
-            );
+                // If editing title, we don't show the content stack to keep focus on the title area.
+                // We just render an empty content area or a placeholder.
+                frame.render_widget(
+                    Block::default().title(" Content (Editing Title...) "),
+                    content_area,
+                );
+            }
 
             // Footer (Referenced nodes)
             let refs = find_references(&note.content);

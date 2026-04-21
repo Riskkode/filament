@@ -655,6 +655,7 @@ pub fn build_status(app: &App) -> String {
                     let note = app.notes.get(*selected).map(|n| n.title.as_str()).unwrap_or("none");
                     format!(" Archive │ selected: \"{}\" │ n:new  e:edit  x:delete  Space:switcher ", note)
                 }
+                ArchiveState::BrowseDocument { .. } => " Document View │ hjkl:nav  Enter:edit  Esc:back ".to_string(),
                 ArchiveState::EditTitle { buf, .. } => format!(" editing title: \"{}\" ", buf),
                 ArchiveState::EditContent { .. } => " editing content │ Esc:save & exit │ Ctrl-g: jump to @mention ".to_string(),
             }

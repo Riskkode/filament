@@ -38,6 +38,11 @@ fn format_duration(seconds: i64) -> String {
     if seconds < 0 { format!("-{}", joined) } else { joined }
 }
 
+pub struct DocElement {
+    pub note_idx: usize,
+    pub depth:    usize,
+}
+
 pub struct App {
     pub arrow:    ArrowSettings,
     pub nodes:    Vec<Node>,
@@ -81,40 +86,45 @@ pub struct App {
 
 impl App {
     pub fn build_concatenated_document(&self, note_idx: usize) -> String {
-        let note_title = &self.notes[note_idx].title;
-        
-        // 1. Find the first node on canvas that points to this note
-        let Some(root_node_idx) = self.nodes.iter().enumerate().find(|(_, n)| {
-            n.is_managed_note && &n.label == note_title
-        }).and_then(|(i, _)| self.nodes[i].parent) else {
-            return self.notes[note_idx].content.clone();
-        };
-
-        // 2. Recursively build content
+        let elements = self.get_document_elements(note_idx);
         let mut result = String::new();
-        self.collect_reference_notes_recursive(root_node_idx, 1, &mut result);
+        for el in elements {
+            let note = &self.notes[el.note_idx];
+            let heading = "#".repeat(el.depth.min(6));
+            if !result.is_empty() { result.push_str("\n\n"); }
+            result.push_str(&format!("{} {}\n\n", heading, note.title));
+            result.push_str(&note.content);
+        }
         result
     }
 
-    fn collect_reference_notes_recursive(&self, node_idx: usize, depth: usize, out: &mut String) {
-        // Find if this node has a Reference Note child
-        let ref_note = self.nodes[node_idx].children.iter()
+    pub fn get_document_elements(&self, note_idx: usize) -> Vec<DocElement> {
+        if note_idx >= self.notes.len() { return vec![]; }
+        let note_title = &self.notes[note_idx].title;
+        let Some(root_node_idx) = self.nodes.iter().enumerate().find(|(_, n)| {
+            n.is_managed_note && &n.label == note_title
+        }).and_then(|(i, _)| self.nodes[i].parent) else {
+            return vec![DocElement { note_idx, depth: 1 }];
+        };
+
+        let mut out = Vec::new();
+        self.collect_doc_elements_recursive(root_node_idx, 1, &mut out);
+        out
+    }
+
+    fn collect_doc_elements_recursive(&self, node_idx: usize, depth: usize, out: &mut Vec<DocElement>) {
+        let ref_note_idx = self.nodes[node_idx].children.iter()
             .map(|&cid| &self.nodes[cid])
             .filter(|n| n.is_managed_note)
-            .find_map(|mn| self.notes.iter().find(|n| n.title == mn.label && n.note_type == crate::models::archive_note::NoteType::Reference));
+            .find_map(|mn| self.notes.iter().position(|n| n.title == mn.label && n.note_type == crate::models::archive_note::NoteType::Reference));
 
-        if let Some(note) = ref_note {
-            // Add Markdown heading based on depth
-            let heading = "#".repeat(depth.min(6));
-            if !out.is_empty() { out.push_str("\n\n"); }
-            out.push_str(&format!("{} {}\n\n", heading, note.title));
-            out.push_str(&note.content);
+        if let Some(idx) = ref_note_idx {
+            out.push(DocElement { note_idx: idx, depth });
         }
 
-        // Recursively process children
         for &cid in &self.nodes[node_idx].children {
             if !self.nodes[cid].is_managed_note {
-                self.collect_reference_notes_recursive(cid, depth + 1, out);
+                self.collect_doc_elements_recursive(cid, depth + 1, out);
             }
         }
     }
@@ -713,7 +723,17 @@ impl App {
     pub fn archive_enter_editor(&mut self) {
         if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
             if let Some(note) = self.notes.get(selected) {
-                self.mode = Mode::ArchivePage { state: ArchiveState::EditContent { idx: selected, buf: note.content.clone(), cursor: note.content.len() }, previous: Box::new(self.mode.clone()) };
+                if note.note_type == NoteType::Reference {
+                    self.mode = Mode::ArchivePage { 
+                        state: ArchiveState::BrowseDocument { note_idx: selected, doc_idx: 0 }, 
+                        previous: Box::new(self.mode.clone()) 
+                    };
+                } else {
+                    self.mode = Mode::ArchivePage { 
+                        state: ArchiveState::EditContent { idx: selected, buf: note.content.clone(), cursor: note.content.len() }, 
+                        previous: Box::new(self.mode.clone()) 
+                    };
+                }
             }
         }
     }
@@ -755,7 +775,7 @@ impl App {
 
     pub fn archive_editor_confirm(&mut self) {
         match self.mode.clone() {
-            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, .. } => {
+            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, previous } => {
                 let index = idx;
                 let title = buf;
                 if index < self.notes.len() {
@@ -764,18 +784,13 @@ impl App {
                     self.notes.push(ArchiveNote { id: None, title, content: String::new(), note_type: NoteType::Quick });
                 }
                 self.save_project();
-                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
+                self.mode = *previous;
             }
             Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, .. } => {
                 if idx < self.notes.len() {
                     self.notes[idx].content = buf;
                     self.save_project();
                 }
-                // Enter stays in editor but adds newline?
-                // The requirement says: "Enter (newline)"
-                // So I should just insert a newline if in EditContent.
-                // Wait, if I handle Enter as newline, how do I exit? "Esc (back to list)".
-                // OK, so Enter in EditContent is just a character.
                 self.archive_editor_char('\n');
             }
             _ => {}
@@ -784,7 +799,7 @@ impl App {
 
     pub fn archive_editor_save_and_exit(&mut self) {
         match self.mode.clone() {
-            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, .. } => {
+            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, previous } => {
                 let index = idx;
                 let title = buf;
                 if index < self.notes.len() {
@@ -793,16 +808,16 @@ impl App {
                     self.notes.push(ArchiveNote { id: None, title, content: String::new(), note_type: NoteType::Quick });
                 }
                 self.save_project();
-                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
+                self.mode = *previous;
             }
-            Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, .. } => {
+            Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, previous } => {
                 let index = idx;
                 let content = buf;
                 if let Some(note) = self.notes.get_mut(index) {
                     note.content = content;
                     self.save_project();
                 }
-                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: index }, previous: Box::new(self.mode.clone()) };
+                self.mode = *previous;
             }
             _ => {}
         }

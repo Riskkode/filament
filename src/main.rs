@@ -341,7 +341,8 @@ fn main() -> io::Result<()> {
 
                 Mode::ArchivePage { state: ref as_state, ref previous } => {
                     match as_state {
-                        ArchiveState::BrowseList { .. } => {
+                        ArchiveState::BrowseList { selected } => {
+                            let selected = *selected;
                             match key.code {
                                 KeyCode::Char(' ') => app.mode = Mode::ContextSwitcher { selected: 2, previous: Box::new(app.mode.clone()) },
                                 KeyCode::Char('q') => app.quit_to_main_menu(),
@@ -349,10 +350,62 @@ fn main() -> io::Result<()> {
                                 KeyCode::Char('x') => app.archive_delete_note(),
                                 KeyCode::Char('j') | KeyCode::Down => app.archive_nav(1),
                                 KeyCode::Char('k') | KeyCode::Up   => app.archive_nav(-1),
+                                KeyCode::Char('l') | KeyCode::Right => {
+                                    if selected < app.notes.len() && app.notes[selected].note_type == crate::models::archive_note::NoteType::Reference {
+                                        app.mode = Mode::ArchivePage { 
+                                            state: ArchiveState::BrowseDocument { note_idx: selected, doc_idx: 0 },
+                                            previous: previous.clone()
+                                        };
+                                    } else {
+                                        app.archive_enter_editor();
+                                    }
+                                }
                                 KeyCode::Enter => app.archive_enter_editor(),
                                 KeyCode::Char('e') => app.archive_edit_title(),
                                 KeyCode::Char('@') => app.archive_jump_at(canvas_w as u16, canvas_h as u16),
                                 KeyCode::Esc => app.mode = *previous.clone(),
+                                _ => {}
+                            }
+                        }
+                        ArchiveState::BrowseDocument { note_idx, doc_idx } => {
+                            let note_idx = *note_idx;
+                            let doc_idx = *doc_idx;
+                            let elements = app.get_document_elements(note_idx);
+                            match key.code {
+                                KeyCode::Char(' ') => app.mode = Mode::ContextSwitcher { selected: 2, previous: Box::new(app.mode.clone()) },
+                                KeyCode::Char('h') | KeyCode::Left | KeyCode::Esc => {
+                                    app.mode = Mode::ArchivePage { 
+                                        state: ArchiveState::BrowseList { selected: note_idx },
+                                        previous: previous.clone()
+                                    };
+                                }
+                                KeyCode::Char('j') | KeyCode::Down => {
+                                    let next = (doc_idx + 1).min(elements.len().saturating_sub(1));
+                                    app.mode = Mode::ArchivePage { 
+                                        state: ArchiveState::BrowseDocument { note_idx, doc_idx: next },
+                                        previous: previous.clone()
+                                    };
+                                }
+                                KeyCode::Char('k') | KeyCode::Up => {
+                                    let next = doc_idx.saturating_sub(1);
+                                    app.mode = Mode::ArchivePage { 
+                                        state: ArchiveState::BrowseDocument { note_idx, doc_idx: next },
+                                        previous: previous.clone()
+                                    };
+                                }
+                                KeyCode::Enter | KeyCode::Char('e') | KeyCode::Char('l') | KeyCode::Right => {
+                                    if let Some(el) = elements.get(doc_idx) {
+                                        let note = &app.notes[el.note_idx];
+                                        app.mode = Mode::ArchivePage {
+                                            state: ArchiveState::EditContent {
+                                                idx: el.note_idx,
+                                                buf: note.content.clone(),
+                                                cursor: note.content.len()
+                                            },
+                                            previous: Box::new(app.mode.clone())
+                                        };
+                                    }
+                                }
                                 _ => {}
                             }
                         }
