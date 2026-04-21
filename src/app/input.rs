@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use super::{App, CanvasState, InputAction, Mode};
 use crate::models::node::Node;
-use std::collections::HashMap;
 
 impl App {
     /// `i` — insert new child under selected node.
@@ -97,7 +96,6 @@ impl App {
                     label: buf, parent: Some(parent), children: vec![], links: vec![],
                     tags: HashMap::new(),
                     collapsed: false, row: usize::MAX, world_x: 0, world_y: 0, world_x_end: 0,
-                    tags: HashMap::new(),
                     times: HashMap::new(),
                     is_managed_note: false,
                     managed: None,

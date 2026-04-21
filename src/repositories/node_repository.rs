@@ -57,7 +57,6 @@ pub fn load(conn: &Connection) -> Result<(Vec<Node>, HashMap<i64, usize>)> {
         world_x:   r.world_x,
         world_y:   r.world_y,
         world_x_end: 0,
-        tags:      HashMap::new(),
         times:     HashMap::new(),
         is_managed_note: r.is_managed_note,
         managed: None,
