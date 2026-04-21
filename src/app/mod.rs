@@ -100,7 +100,13 @@ impl App {
 
     pub fn get_document_elements(&self, note_idx: usize) -> Vec<DocElement> {
         if note_idx >= self.notes.len() { return vec![]; }
+
+        if self.notes[note_idx].note_type == NoteType::Quick {
+            return vec![DocElement { note_idx, depth: 1 }];
+        }
+
         let note_title = &self.notes[note_idx].title;
+
         let Some(root_node_idx) = self.nodes.iter().enumerate().find(|(_, n)| {
             n.is_managed_note && &n.label == note_title
         }).and_then(|(i, _)| self.nodes[i].parent) else {
@@ -722,18 +728,11 @@ impl App {
 
     pub fn archive_enter_editor(&mut self) {
         if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
-            if let Some(note) = self.notes.get(selected) {
-                if note.note_type == NoteType::Reference {
-                    self.mode = Mode::ArchivePage { 
-                        state: ArchiveState::BrowseDocument { note_idx: selected, doc_idx: 0 }, 
-                        previous: Box::new(self.mode.clone()) 
-                    };
-                } else {
-                    self.mode = Mode::ArchivePage { 
-                        state: ArchiveState::EditContent { idx: selected, buf: note.content.clone(), cursor: note.content.len() }, 
-                        previous: Box::new(self.mode.clone()) 
-                    };
-                }
+            if selected < self.notes.len() {
+                self.mode = Mode::ArchivePage {
+                    state: ArchiveState::BrowseDocument { note_idx: selected, doc_idx: 0 },
+                    previous: Box::new(self.mode.clone()),
+                };
             }
         }
     }

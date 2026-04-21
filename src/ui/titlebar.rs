@@ -66,11 +66,11 @@ pub fn build_title<'a>(pal: &'a Palette, mode: &'a Mode) -> Line<'a> {
             match state {
                 ArchiveState::EditTitle { .. } => modal_title(
                     pal, "EDIT TITLE", pal.edit,
-                    "enter title  Enter:save  Esc:cancel".to_string(),
+                    "Enter:save  Esc:cancel".to_string(),
                 ),
                 ArchiveState::EditContent { .. } => modal_title(
                     pal, "EDIT CONTENT", pal.edit,
-                    "enter content  Enter:newline  Esc:done".to_string(),
+                    "Esc:done".to_string(),
                 ),
                 _ => archive_page_title(pal),
             }
