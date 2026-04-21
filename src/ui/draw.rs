@@ -177,7 +177,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
             let status_span = match node.tags.get("status").map(|s| s.as_str()) {
                 Some("todo")        => Span::styled("○ ", Style::default().fg(app.palette.status_todo)),
-                Some("in_progress") => Span::styled("◑ ", Style::default().fg(app.palette.status_progress)),
+                Some("in_progress") => Span::styled("● ", Style::default().fg(app.palette.status_progress)),
                 Some("completed")   => Span::styled("● ", Style::default().fg(app.palette.status_done)),
                 Some("blocked")     => Span::styled("⊘ ", Style::default().fg(app.palette.status_blocked)),
                 _ => Span::raw(""),
