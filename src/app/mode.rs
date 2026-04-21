@@ -5,9 +5,42 @@ pub enum Mode {
     /// Ground state. hjkl moves the world cursor; everything else is a
     /// sub-mode entered from here.
     Canvas   { state: CanvasState },
-    Input    { action: InputAction, buf: String, cursor: usize },
+    Input    { action: InputAction, buf: String, cursor: usize, previous: Box<Mode> },
     Reparent { subject: usize, orig_parent: Option<usize>, orig_pos: usize, cursor: usize },
+    /// Global context switching overlay.
+    ContextSwitcher { selected: usize, previous: Box<Mode> },
+    /// Status Page / Query Centre.
+    StatusPage { state: StatusPageState },
+    /// Archive Page / Notes Centre.
+    ArchivePage { state: ArchiveState, previous: Box<Mode> },
+    /// Status tagging chord waiting for next key.
+    TagStatus { previous: Box<Mode> },
+    /// Time tagging chord waiting for next key.
+    TagTime { previous: Box<Mode> },
+    /// Time tagging clear chord waiting for next key.
+    TagTimeClear { previous: Box<Mode> },
+    /// Time tagging: user is typing the date/time string.
+    TimeInput { time_type: String, buf: String, cursor: usize, previous: Box<Mode> },
+    /// Note association: user is typing the note title.
+    NoteInput { buf: String, cursor: usize, note_type: crate::models::archive_note::NoteType, previous: Box<Mode> },
     Help,
+}
+
+#[derive(Clone)]
+pub enum StatusPageState {
+    Browse { group_idx: usize, item_idx: Option<usize> },
+    NewQueryName { buf: String, cursor: usize },
+    NewQueryLogic { name: String, buf: String, cursor: usize },
+    EditQueryName { idx: usize, buf: String, cursor: usize },
+    EditQueryLogic { idx: usize, name: String, buf: String, cursor: usize },
+}
+
+#[derive(Clone)]
+pub enum ArchiveState {
+    BrowseList { selected: usize },
+    BrowseDocument { note_idx: usize, doc_idx: usize },
+    EditTitle  { idx: usize, buf: String, cursor: usize },
+    EditContent { idx: usize, buf: String, cursor: usize },
 }
 
 #[derive(Clone)]

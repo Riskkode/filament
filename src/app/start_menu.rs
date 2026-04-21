@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use super::{App, Mode};
+use super::{App, Mode, move_cursor_in_buf};
 use super::mode::StartMenuState;
 use crate::models::node::Node;
+use std::collections::HashMap;
 
 impl App {
     // ── Navigation ────────────────────────────────────────────────────────────
 
-    pub fn start_menu_nav(&mut self, delta: i32) {
+    pub fn start_menu_nav(&mut self, delta: i32, canvas_h: u16) {
         let order = self.recompute_layout();
         let count = order.len();
         if count == 0 { return; }
@@ -18,9 +18,19 @@ impl App {
         if let Mode::StartMenu { state: StartMenuState::Main { ref mut selected } } = self.mode {
             *selected = self.selected;
         }
+
+        // Lazy camera scroll for start menu.
+        // banner_h=6 + margin=2 = 8 lines offset.
+        let banner_h = 6i32;
+        let visible_height = (canvas_h as i32).saturating_sub(banner_h + 5).max(1);
+        
+        let wy = next_pos as i32;
+        let sy = wy - self.camera_y;
+        if sy < 0 { self.camera_y = wy; }
+        else if sy >= visible_height { self.camera_y = wy - (visible_height - 1); }
     }
 
-    pub fn start_menu_go_to_label(&mut self, target: &str) {
+    pub fn start_menu_go_to_label(&mut self, target: &str, canvas_h: u16) {
         let target_lower = if target == "new" { "+ new".to_string() } 
             else if target == "help" { "help".to_string() }
             else { target.to_lowercase() };
@@ -31,6 +41,18 @@ impl App {
             if let Mode::StartMenu { state: StartMenuState::Main { ref mut selected } } = self.mode {
                 *selected = idx;
             }
+            
+            // Scroll to it
+            let order = self.recompute_layout();
+            if let Some(pos) = order.iter().position(|&(id, _)| id == idx) {
+                let banner_h = 6i32;
+                let visible_height = (canvas_h as i32).saturating_sub(banner_h + 5).max(1);
+                let wy = pos as i32;
+                let sy = wy - self.camera_y;
+                if sy < 0 { self.camera_y = wy; }
+                else if sy >= visible_height { self.camera_y = wy - (visible_height - 1); }
+            }
+
             self.start_menu_confirm();
         }
     }
@@ -59,8 +81,7 @@ impl App {
                 } else if label.contains("default filaments path") || label.contains("username") {
                     self.start_menu_edit();
                 } else if let Some(parent) = self.nodes[node_id].parent {
-                    let parent_label = self.nodes[parent].label.to_lowercase();
-                    if parent_label.contains("open") {
+                    if self.nodes[parent].label.to_lowercase().contains("open") {
                         // This is a project node
                         let project_idx = self.nodes[parent].children.iter().position(|&id| id == node_id).unwrap();
                         let path = match self.registry.projects.get(project_idx) {
@@ -68,21 +89,12 @@ impl App {
                             None    => return,
                         };
                         self.load_project(&path);
-                    } else if parent_label.contains("themes") {
-                        // This is a theme node
-                        let theme_name = self.nodes[node_id].label.split_whitespace().next().unwrap_or("").to_string();
+                    } else if self.nodes[parent].label.to_lowercase().contains("themes") {
+                        let theme_name = self.nodes[node_id].label.trim_start_matches("• ").to_string();
                         self.settings.palette = theme_name.clone();
-                        self.palette = crate::ui::palette::Palette::get_palette(&self.settings.palette);
+                        self.palette = crate::ui::palette::get_palette(&theme_name);
                         let _ = self.settings.save();
-                        
-                        // Update labels in the current tree instead of rebuilding
-                        // This prevents the tree from collapsing.
-                        let siblings = self.nodes[parent].children.clone();
-                        for sibling_id in siblings {
-                            let label = self.nodes[sibling_id].label.split_whitespace().next().unwrap_or("").to_string();
-                            let active = if label == theme_name { " (active)" } else { "" };
-                            self.nodes[sibling_id].label = format!("{}{}", label, active);
-                        }
+                        self.init_main_menu_nodes();
                     }
                 }
             }
@@ -107,10 +119,6 @@ impl App {
                     match key.as_str() {
                         "default_projects_path" => self.settings.default_projects_path = buf.clone(),
                         "username" => self.settings.username = buf.clone(),
-                        "palette" => {
-                            self.settings.palette = buf.clone();
-                            self.palette = crate::ui::palette::Palette::get_palette(&self.settings.palette);
-                        }
                         _ => {}
                     }
                     let _ = self.settings.save();
@@ -280,12 +288,15 @@ impl App {
             parent: Some(new_node_idx),
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: 0,
             world_x: 0,
             world_y: 0,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
         self.nodes[new_node_idx].children.push(child_idx);
         self.nodes[new_node_idx].collapsed = false;
@@ -470,19 +481,5 @@ impl App {
             }
             _ => {}
         }
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn move_cursor_in_buf(buf: &str, cursor: &mut usize, delta: i32) {
-    if delta < 0 {
-        if *cursor > 0 {
-            let ch = buf[..*cursor].chars().last().unwrap();
-            *cursor -= ch.len_utf8();
-        }
-    } else if *cursor < buf.len() {
-        let ch = buf[*cursor..].chars().next().unwrap();
-        *cursor += ch.len_utf8();
     }
 }

@@ -25,13 +25,14 @@ pub fn open(path: &Path) -> Result<Connection> {
 
     conn.execute_batch("
         CREATE TABLE IF NOT EXISTS nodes (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            label     TEXT    NOT NULL,
-            parent_id INTEGER REFERENCES nodes(id),
-            sort_key  INTEGER NOT NULL DEFAULT 0,
-            collapsed INTEGER NOT NULL DEFAULT 0,
-            world_x   INTEGER NOT NULL DEFAULT 0,
-            world_y   INTEGER NOT NULL DEFAULT 0
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            label            TEXT    NOT NULL,
+            parent_id        INTEGER REFERENCES nodes(id),
+            sort_key         INTEGER NOT NULL DEFAULT 0,
+            collapsed        INTEGER NOT NULL DEFAULT 0,
+            world_x          INTEGER NOT NULL DEFAULT 0,
+            world_y          INTEGER NOT NULL DEFAULT 0,
+            is_managed_note  INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS links (
@@ -45,7 +46,61 @@ pub fn open(path: &Path) -> Result<Connection> {
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             snapshot  TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS node_tags (
+            node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            tag_key    TEXT NOT NULL,
+            tag_value  TEXT NOT NULL,
+            PRIMARY KEY (node_id, tag_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS node_times (
+            node_id      INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+            time_type    TEXT NOT NULL,
+            time_value   INTEGER NOT NULL,
+            time_pattern TEXT,
+            PRIMARY KEY (node_id, time_type)
+        );
+
+        CREATE TABLE IF NOT EXISTS queries (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            name  TEXT NOT NULL,
+            logic TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS notes (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            title     TEXT NOT NULL UNIQUE,
+            content   TEXT NOT NULL,
+            note_type INTEGER NOT NULL DEFAULT 0
+        );
     ")?;
+
+    // Migration: Add note_type column if it doesn't exist.
+    let has_note_type: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='note_type'", 
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if has_note_type == 0 {
+        let _ = conn.execute("ALTER TABLE notes ADD COLUMN note_type INTEGER NOT NULL DEFAULT 0", []);
+    }
+
+    // Migration: Add time_pattern column if it doesn't exist.
+    let has_pattern: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('node_times') WHERE name='time_pattern'", 
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if has_pattern == 0 {
+        let _ = conn.execute("ALTER TABLE node_times ADD COLUMN time_pattern TEXT", []);
+    }
+
+    let has_managed: i32 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('nodes') WHERE name='is_managed_note'", 
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if has_managed == 0 {
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN is_managed_note INTEGER NOT NULL DEFAULT 0", []);
+    }
 
     Ok(conn)
 }

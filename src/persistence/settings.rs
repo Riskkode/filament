@@ -5,11 +5,8 @@ use std::path::PathBuf;
 pub struct GlobalSettings {
     pub default_projects_path: String,
     pub username: String,
-    #[serde(default = "default_palette")]
     pub palette: String,
 }
-
-fn default_palette() -> String { "dracula".to_string() }
 
 impl Default for GlobalSettings {
     fn default() -> Self {

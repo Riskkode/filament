@@ -4,19 +4,52 @@ mod delete;
 mod input;
 mod start_menu;
 mod reparent;
+pub mod query;
 
-pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState};
+pub use mode::{ArrowFidelity, ArrowSettings, CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
 
-use crate::models::node::Node;
+use crate::models::node::{Node, ManagedNodeType};
+use crate::models::query::StatusQuery;
+use crate::models::archive_note::{ArchiveNote, NoteType};
 use crate::persistence::project::ProjectSettings;
 use crate::persistence::registry::Registry;
 use crate::persistence::settings::GlobalSettings;
+use crate::ui::palette::{Palette, get_palette};
 use std::path::PathBuf;
 use std::collections::{HashSet, HashMap};
+use chrono::{Local, Utc, TimeZone};
+
+fn format_duration(seconds: i64) -> String {
+    let mut s = seconds.abs();
+    let days = s / 86400;
+    s %= 86400;
+    let hours = s / 3600;
+    s %= 3600;
+    let minutes = s / 60;
+    let secs = s % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 { parts.push(format!("{}d", days)); }
+    if hours > 0 { parts.push(format!("{}h", hours)); }
+    if minutes > 0 { parts.push(format!("{}m", minutes)); }
+    if secs > 0 || parts.is_empty() { parts.push(format!("{}s", secs)); }
+
+    let joined = parts.join(" ");
+    if seconds < 0 { format!("-{}", joined) } else { joined }
+}
+
+pub struct DocElement {
+    pub note_idx: usize,
+    pub depth:    usize,
+}
 
 pub struct App {
     pub arrow:    ArrowSettings,
     pub nodes:    Vec<Node>,
+    /// User defined queries for the Status page.
+    pub queries:  Vec<StatusQuery>,
+    /// User defined notes for the Archive page.
+    pub notes:    Vec<ArchiveNote>,
     /// The node currently under (or nearest to) the world cursor.
     /// Valid only when `has_selection()` is true.
     pub selected: usize,
@@ -38,8 +71,7 @@ pub struct App {
     pub registry: Registry,
     /// Global application settings.
     pub settings: GlobalSettings,
-    /// Current UI palette.
-    pub palette: crate::ui::palette::Palette,
+    pub palette:  Palette,
     /// Transient message shown in the status bar (errors, hints).
     pub status_message: Option<String>,
     /// Stack of previous node states for undo.
@@ -49,13 +81,62 @@ pub struct App {
     pub last_link_idx:    usize,
     /// Track previous mode for Help restoration.
     pub help_previous_mode: Option<Mode>,
+    pub show_note_previews: bool,
 }
 
 impl App {
+    pub fn build_concatenated_document(&self, note_idx: usize) -> String {
+        let elements = self.get_document_elements(note_idx);
+        let mut result = String::new();
+        for el in elements {
+            let note = &self.notes[el.note_idx];
+            let heading = "#".repeat(el.depth.min(6));
+            if !result.is_empty() { result.push_str("\n\n"); }
+            result.push_str(&format!("{} {}\n\n", heading, note.title));
+            result.push_str(&note.content);
+        }
+        result
+    }
+
+    pub fn get_document_elements(&self, note_idx: usize) -> Vec<DocElement> {
+        if note_idx >= self.notes.len() { return vec![]; }
+        let note_title = &self.notes[note_idx].title;
+        let Some(root_node_idx) = self.nodes.iter().enumerate().find(|(_, n)| {
+            n.is_managed_note && &n.label == note_title
+        }).and_then(|(i, _)| self.nodes[i].parent) else {
+            return vec![DocElement { note_idx, depth: 1 }];
+        };
+
+        let mut out = Vec::new();
+        self.collect_doc_elements_recursive(root_node_idx, 1, &mut out);
+        out
+    }
+
+    fn collect_doc_elements_recursive(&self, node_idx: usize, depth: usize, out: &mut Vec<DocElement>) {
+        let ref_note_idx = self.nodes[node_idx].children.iter()
+            .map(|&cid| &self.nodes[cid])
+            .filter(|n| n.is_managed_note)
+            .find_map(|mn| self.notes.iter().position(|n| n.title == mn.label && n.note_type == crate::models::archive_note::NoteType::Reference));
+
+        if let Some(idx) = ref_note_idx {
+            out.push(DocElement { note_idx: idx, depth });
+        }
+
+        for &cid in &self.nodes[node_idx].children {
+            if !self.nodes[cid].is_managed_note {
+                self.collect_doc_elements_recursive(cid, depth + 1, out);
+            }
+        }
+    }
+
     pub fn new() -> Self {
+        let settings = GlobalSettings::load();
+        let palette = get_palette(&settings.palette);
         let mut app = Self {
             arrow:    ArrowSettings::default(),
             nodes:    vec![],
+            queries:  vec![],
+            notes:    vec![],
             selected: 0,
             camera_x: 0,
             camera_y: 0,
@@ -66,17 +147,107 @@ impl App {
             project_name:       String::new(),
             project_created_at: 0,
             registry:           Registry::load(),
-            settings:           GlobalSettings::load(),
-            palette:            crate::ui::palette::Palette::dracula(), // Initial, will update below
+            settings,
+            palette,
             status_message:     None,
             undo_stack:         vec![],
             last_link_origin:   None,
             last_link_idx:      0,
             help_previous_mode: None,
+            show_note_previews: true,
         };
-        app.palette = crate::ui::palette::Palette::get_palette(&app.settings.palette);
         app.init_main_menu_nodes();
         app
+    }
+
+    pub fn sync_managed_nodes(&mut self) {
+        let mut managed_ids: HashSet<usize> = self.nodes.iter().enumerate()
+            .filter(|(_, n)| n.managed.is_some())
+            .map(|(i, _)| i)
+            .collect();
+
+        // 1. Ensure all nodes have their managed groups/tags
+        let n = self.nodes.len();
+        for i in 0..n {
+            // Only process real nodes that have times
+            if self.nodes[i].managed.is_some() || self.nodes[i].times.is_empty() { continue; }
+            
+            let group_idx = if let Some(&g) = self.nodes[i].children.iter().find(|&&c| {
+                if c < self.nodes.len() {
+                    matches!(self.nodes[c].managed, Some(ManagedNodeType::TimeGroup))
+                } else { false }
+            }) {
+                managed_ids.remove(&g);
+                g
+            } else {
+                let new_idx = self.nodes.len();
+                let group = Node {
+                    label: "[Times]".to_string(),
+                    parent: Some(i),
+                    children: vec![],
+                    links: vec![],
+                    collapsed: false,
+                    row: usize::MAX,
+                    world_x: 0,
+                    world_y: 0,
+                    world_x_end: 0,
+                    tags: HashMap::new(),
+                    times: HashMap::new(),
+                    is_managed_note: false,
+                    managed: Some(ManagedNodeType::TimeGroup),
+                };
+                self.nodes.push(group);
+                self.nodes[i].children.push(new_idx);
+                new_idx
+            };
+
+            let keys: Vec<String> = self.nodes[i].times.keys().cloned().collect();
+            for key in keys {
+                let tag = self.nodes[i].times.get(&key).unwrap();
+                let label = if key == "duration" {
+                    format!("duration: {}", format_duration(tag.timestamp))
+                } else {
+                    let dt = Local.timestamp_opt(tag.timestamp, 0).unwrap();
+                    let fmt = if tag.pattern.is_some() { "%Y-%m-%d %H:%M (recurring)" } else { "%Y-%m-%d %H:%M" };
+                    format!("{}: {}", key, dt.format(fmt))
+                };
+
+                if let Some(&t) = self.nodes[group_idx].children.iter().find(|&&c| {
+                    if c < self.nodes.len() {
+                        if let Some(ManagedNodeType::TimeTag { key: k }) = &self.nodes[c].managed {
+                            k == &key
+                        } else { false }
+                    } else { false }
+                }) {
+                    managed_ids.remove(&t);
+                    self.nodes[t].label = label;
+                } else {
+                    let new_tag_idx = self.nodes.len();
+                    let tag_node = Node {
+                        label,
+                        parent: Some(group_idx),
+                        children: vec![],
+                        links: vec![],
+                        collapsed: false,
+                        row: usize::MAX,
+                        world_x: 0,
+                        world_y: 0,
+                        world_x_end: 0,
+                        tags: HashMap::new(),
+                        times: HashMap::new(),
+                        is_managed_note: false,
+                        managed: Some(ManagedNodeType::TimeTag { key }),
+                    };
+                    self.nodes.push(tag_node);
+                    self.nodes[group_idx].children.push(new_tag_idx);
+                }
+            }
+        }
+
+        // 2. Remove any managed nodes that were not reconciled (orphans)
+        if !managed_ids.is_empty() {
+            self.remove_nodes(&managed_ids);
+        }
     }
 
     pub fn push_undo(&mut self) {
@@ -123,7 +294,7 @@ impl App {
     /// `<base>/.filament/` and applies the state to `self`.
     pub fn load_project(&mut self, base: &std::path::Path) {
         use crate::db::connection;
-        use crate::repositories::node_repository;
+        use crate::repositories::{node_repository, query_repository, note_repository};
 
         let settings = match ProjectSettings::load(base) {
             Ok(s) => s,
@@ -141,11 +312,14 @@ impl App {
             Err(e) => { self.status_message = Some(format!("load error: {e}")); return; }
         };
 
+        self.queries = query_repository::load_queries(&conn).unwrap_or_default();
+        self.notes   = note_repository::load_notes(&conn).unwrap_or_default();
         self.nodes    = nodes;
         self.camera_x = settings.view.camera_x;
         self.camera_y = settings.view.camera_y;
         self.cursor_x = settings.view.cursor_x;
         self.cursor_y = settings.view.cursor_y;
+        self.show_note_previews = settings.view.show_note_previews;
         self.selected = id_to_idx.get(&settings.view.selected_db_id).copied().unwrap_or(0);
         self.arrow    = ArrowSettings {
             global:   settings.arrows.global,
@@ -162,13 +336,14 @@ impl App {
 
         self.status_message     = None;
         self.mode               = Mode::Canvas { state: CanvasState::Browse };
+        self.sync_managed_nodes();
     }
 
     /// Persist the current canvas state to `<project_path>/.filament/`.
     /// Silent no-op when no project is open.
     pub fn save_project(&mut self) {
         use crate::db::connection;
-        use crate::repositories::node_repository;
+        use crate::repositories::{node_repository, query_repository, note_repository};
 
         let Some(base) = &self.project_path else { return };
 
@@ -182,6 +357,9 @@ impl App {
             Ok(m) => m,
             Err(_) => return,
         };
+
+        let _ = query_repository::save_queries(&conn, &self.queries);
+        let _ = note_repository::save_notes(&conn, &self.notes);
         
         // Save to history too
         let _ = node_repository::push_history(&conn, &self.nodes);
@@ -197,6 +375,7 @@ impl App {
                 cursor_x:       self.cursor_x,
                 cursor_y:       self.cursor_y,
                 selected_db_id,
+                show_note_previews: self.show_note_previews,
             },
             arrows: crate::persistence::project::SavedArrows {
                 global:   self.arrow.global,
@@ -247,12 +426,15 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false, // Start expanded
             row: 0,
             world_x: 0,
             world_y: 0,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
 
         // Add projects as children of "Open"
@@ -264,12 +446,15 @@ impl App {
                 parent: Some(open_idx),
                 children: vec![],
                 links: vec![],
-                tags: HashMap::new(),
                 collapsed: false,
                 row: i + 1,
                 world_x: 0,
                 world_y: (i + 1) as i32,
                 world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: None,
             });
             self.nodes[open_idx].children.push(child_idx);
         }
@@ -280,12 +465,15 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
 
         // 3. Root: Import
@@ -294,12 +482,15 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
 
         // 4. Root: Find
@@ -308,12 +499,15 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
 
         // 4. Root: Settings
@@ -323,12 +517,15 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: true, // Start collapsed
             row: settings_idx,
             world_x: 0,
             world_y: settings_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
         
         // Add specific settings as children of "Settings"
@@ -338,12 +535,15 @@ impl App {
             parent: Some(settings_idx),
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: path_idx,
             world_x: 0,
             world_y: path_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
         self.nodes[settings_idx].children.push(path_idx);
 
@@ -353,49 +553,60 @@ impl App {
             parent: Some(settings_idx),
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: user_idx,
             world_x: 0,
             world_y: user_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
         self.nodes[settings_idx].children.push(user_idx);
 
+        // Themes
         let themes_idx = self.nodes.len();
         self.nodes.push(Node {
             label: "🎨 Themes".to_string(),
             parent: Some(settings_idx),
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: true,
             row: themes_idx,
             world_x: 0,
             world_y: themes_idx as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
         self.nodes[settings_idx].children.push(themes_idx);
 
-        let mut theme_names: Vec<String> = crate::ui::palette::Palette::load_all().keys().cloned().collect();
-        theme_names.sort();
-
-        for theme in theme_names {
-            let active = if self.settings.palette == theme { " (active)" } else { "" };
-            let t_idx = self.nodes.len();
+        for palette in crate::ui::palette::load_all() {
+            let p_idx = self.nodes.len();
+            let label = if palette.name == self.settings.palette {
+                format!("• {}", palette.name)
+            } else {
+                palette.name.clone()
+            };
             self.nodes.push(Node {
-                label: format!("{}{}", theme, active),
+                label,
                 parent: Some(themes_idx),
                 children: vec![],
                 links: vec![],
-                tags: HashMap::new(),
                 collapsed: false,
-                row: t_idx,
+                row: p_idx,
                 world_x: 0,
-                world_y: t_idx as i32,
+                world_y: p_idx as i32,
                 world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: None,
             });
-            self.nodes[themes_idx].children.push(t_idx);
+            self.nodes[themes_idx].children.push(p_idx);
         }
 
         // 5. Root: Help
@@ -404,12 +615,15 @@ impl App {
             parent: None,
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: self.nodes.len(),
             world_x: 0,
             world_y: self.nodes.len() as i32,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
     }
 
@@ -427,9 +641,233 @@ impl App {
             && self.node_near_cursor(self.cursor_x, self.cursor_y).is_some()
     }
 
+    // ── Queries ──────────────────────────────────────────────────────────────
+
+    pub fn status_add_query(&mut self, name: String, logic: String) {
+        self.queries.push(StatusQuery { id: None, name, logic });
+        self.save_project();
+    }
+
+    pub fn status_remove_query(&mut self, idx: usize) {
+        if idx < self.queries.len() {
+            self.queries.remove(idx);
+            self.save_project();
+        }
+    }
+
+    pub fn status_update_query(&mut self, idx: usize, name: String, logic: String) {
+        if idx < self.queries.len() {
+            self.queries[idx].name = name;
+            self.queries[idx].logic = logic;
+            self.save_project();
+        }
+    }
+
+    pub fn get_query_results(&self, query_idx: usize) -> Vec<usize> {
+        if query_idx >= self.queries.len() { return vec![]; }
+        let logic = &self.queries[query_idx].logic;
+        self.nodes.iter().enumerate()
+            .filter(|(_, n)| crate::app::query::evaluate(logic, n))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    // ── Archive ──────────────────────────────────────────────────────────────
+
+    pub fn archive_add_note(&mut self, title: String, content: String) {
+        self.notes.push(ArchiveNote { id: None, title, content, note_type: NoteType::Quick });
+        self.save_project();
+    }
+
+    pub fn archive_remove_note(&mut self, idx: usize) {
+        if idx < self.notes.len() {
+            self.notes.remove(idx);
+            self.save_project();
+        }
+    }
+
+    pub fn archive_update_note(&mut self, idx: usize, title: String, content: String) {
+        if idx < self.notes.len() {
+            self.notes[idx].title = title;
+            self.notes[idx].content = content;
+            self.save_project();
+        }
+    }
+
+    pub fn archive_nav(&mut self, delta: i32) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if self.notes.is_empty() { return; }
+            let next = (selected as i32 + delta).rem_euclid(self.notes.len() as i32) as usize;
+            self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: next }, previous: Box::new(self.mode.clone()) };
+        }
+    }
+
+    pub fn archive_new_note(&mut self) {
+        let idx = self.notes.len();
+        self.notes.push(ArchiveNote { id: None, title: "New Note".to_string(), content: String::new(), note_type: NoteType::Quick });
+        self.mode = Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf: "New Note".to_string(), cursor: 8 }, previous: Box::new(self.mode.clone()) };
+        self.save_project();
+    }
+
+    pub fn archive_delete_note(&mut self) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if selected < self.notes.len() {
+                self.notes.remove(selected);
+                let next = if self.notes.is_empty() { 0 } else { selected.min(self.notes.len() - 1) };
+                self.mode = Mode::ArchivePage { state: ArchiveState::BrowseList { selected: next }, previous: Box::new(self.mode.clone()) };
+                self.save_project();
+            }
+        }
+    }
+
+    pub fn archive_enter_editor(&mut self) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if let Some(note) = self.notes.get(selected) {
+                if note.note_type == NoteType::Reference {
+                    self.mode = Mode::ArchivePage { 
+                        state: ArchiveState::BrowseDocument { note_idx: selected, doc_idx: 0 }, 
+                        previous: Box::new(self.mode.clone()) 
+                    };
+                } else {
+                    self.mode = Mode::ArchivePage { 
+                        state: ArchiveState::EditContent { idx: selected, buf: note.content.clone(), cursor: note.content.len() }, 
+                        previous: Box::new(self.mode.clone()) 
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn archive_edit_title(&mut self) {
+        if let Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } = self.mode {
+            if let Some(note) = self.notes.get(selected) {
+                self.mode = Mode::ArchivePage { state: ArchiveState::EditTitle { idx: selected, buf: note.title.clone(), cursor: note.title.len() }, previous: Box::new(self.mode.clone()) };
+            }
+        }
+    }
+
+    pub fn archive_editor_char(&mut self, c: char) {
+        if let Mode::ArchivePage { state: ref mut s, .. } = self.mode {
+            match s {
+                ArchiveState::EditTitle { buf, cursor, .. } | ArchiveState::EditContent { buf, cursor, .. } => {
+                    buf.insert(*cursor, c);
+                    *cursor += c.len_utf8();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn archive_editor_backspace(&mut self) {
+        if let Mode::ArchivePage { state: ref mut s, .. } = self.mode {
+            match s {
+                ArchiveState::EditTitle { buf, cursor, .. } | ArchiveState::EditContent { buf, cursor, .. } => {
+                    if *cursor > 0 {
+                        let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                        buf.drain(prev..*cursor);
+                        *cursor = prev;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn archive_editor_confirm(&mut self) {
+        match self.mode.clone() {
+            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, previous } => {
+                let index = idx;
+                let title = buf;
+                if index < self.notes.len() {
+                    self.notes[index].title = title;
+                } else {
+                    self.notes.push(ArchiveNote { id: None, title, content: String::new(), note_type: NoteType::Quick });
+                }
+                self.save_project();
+                self.mode = *previous;
+            }
+            Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, .. } => {
+                if idx < self.notes.len() {
+                    self.notes[idx].content = buf;
+                    self.save_project();
+                }
+                self.archive_editor_char('\n');
+            }
+            _ => {}
+        }
+    }
+
+    pub fn archive_editor_save_and_exit(&mut self) {
+        match self.mode.clone() {
+            Mode::ArchivePage { state: ArchiveState::EditTitle { idx, buf, .. }, previous } => {
+                let index = idx;
+                let title = buf;
+                if index < self.notes.len() {
+                    self.notes[index].title = title;
+                } else {
+                    self.notes.push(ArchiveNote { id: None, title, content: String::new(), note_type: NoteType::Quick });
+                }
+                self.save_project();
+                self.mode = *previous;
+            }
+            Mode::ArchivePage { state: ArchiveState::EditContent { idx, buf, .. }, previous } => {
+                let index = idx;
+                let content = buf;
+                if let Some(note) = self.notes.get_mut(index) {
+                    note.content = content;
+                    self.save_project();
+                }
+                self.mode = *previous;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn archive_jump_at(&mut self, canvas_w: u16, canvas_h: u16) {
+        let content = match &self.mode {
+            Mode::ArchivePage { state: ArchiveState::EditContent { buf, .. }, .. } => buf.clone(),
+            Mode::ArchivePage { state: ArchiveState::BrowseList { selected }, .. } => {
+                self.notes.get(*selected).map(|n| n.content.clone()).unwrap_or_default()
+            }
+            _ => return,
+        };
+
+        // Find the last @mention before the cursor or just any @mention
+        // For simplicity, let's look for @ followed by alphanumeric
+        if let Some(at_idx) = content.rfind('@') {
+            let rest = &content[at_idx+1..];
+            let name = rest.split_whitespace().next().unwrap_or("")
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != ' ');
+            
+            if let Some(node_idx) = self.nodes.iter().position(|n| n.label == name) {
+                self.selected = node_idx;
+                self.center_on_selected(canvas_w, canvas_h);
+                self.mode = Mode::Canvas { state: CanvasState::Browse };
+            }
+        }
+    }
+
     // ── Layout ────────────────────────────────────────────────────────────────
 
     pub fn recompute_layout(&mut self) -> Vec<(usize, usize)> {
+        // Auto-advance recurring tags
+        let now = Local::now();
+        let mut changed = false;
+        for node in self.nodes.iter_mut() {
+            for tag in node.times.values_mut() {
+                if let Some(ref pattern) = tag.pattern {
+                    if tag.timestamp < now.timestamp() {
+                        let parse_buf = pattern.to_lowercase().replace("every", "next");
+                        if let Ok(dt) = chrono_english::parse_date_string(&parse_buf, now, chrono_english::Dialect::Uk) {
+                            tag.timestamp = dt.with_timezone(&Utc).timestamp();
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed { self.save_project(); }
+
         for n in self.nodes.iter_mut() { n.row = usize::MAX; }
         let mut order: Vec<(usize, usize)> = Vec::new();
 
@@ -476,11 +914,26 @@ impl App {
                 self.nodes[id].world_x   = rx;
                 self.nodes[id].world_y   = node_y;
                 let label_cols = self.nodes[id].label.chars().count() as i32;
-                let mut suffix_cols = 0;
+                let mut decoration_cols = 0;
                 if !self.nodes[id].children.is_empty() && self.nodes[id].collapsed {
-                    suffix_cols = 5 + self.nodes[id].children.len().to_string().len() as i32;
+                    decoration_cols += 5 + self.nodes[id].children.len().to_string().len() as i32;
                 }
-                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + suffix_cols;
+                if self.nodes[id].tags.contains_key("status") {
+                    decoration_cols += 2;
+                }
+                if self.nodes[id].is_managed_note {
+                    decoration_cols += 2;
+                }
+                if self.nodes[id].collapsed {
+                    for (key, tag) in &self.nodes[id].times {
+                        let mut val_width = if key == "duration" { 15 } else { 10 };
+                        if let Some(ref pattern) = tag.pattern {
+                            val_width += 3 + pattern.chars().count() as i32; // " (pattern)"
+                        }
+                        decoration_cols += 4 + key.chars().count() as i32 + val_width; // " [key: value]"
+                    }
+                }
+                self.nodes[id].world_x_end = rx + depth as i32 * 2 + 2 + label_cols + decoration_cols;
             }
             order.extend(local);
         }
@@ -679,12 +1132,15 @@ mod tests {
                 parent: None,
                 children: vec![],
                 links: vec![],
-                tags: HashMap::new(),
                 collapsed: false,
                 row: 0,
                 world_x: 10,
                 world_y: 5,
                 world_x_end: 30,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: None,
             }
         ];
 
@@ -713,24 +1169,30 @@ mod tests {
             parent: None,
             children: vec![1],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: true,
             row: usize::MAX,
             world_x: 10,
             world_y: 5,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
         app.nodes.push(Node {
             label: "Child".to_string(),
             parent: Some(0),
             children: vec![],
             links: vec![],
-            tags: HashMap::new(),
             collapsed: false,
             row: usize::MAX,
             world_x: 0,
             world_y: 0,
             world_x_end: 0,
+            tags: HashMap::new(),
+            times: HashMap::new(),
+            is_managed_note: false,
+            managed: None,
         });
 
         app.recompute_layout();
@@ -742,6 +1204,20 @@ mod tests {
         // suffix_cols = 5 + "1".len() = 6
         // world_x_end = 10 + 2 + 4 + 6 = 22
         assert_eq!(app.nodes[root].world_x_end, 22);
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+pub(crate) fn move_cursor_in_buf(buf: &str, cursor: &mut usize, delta: i32) {
+    if delta < 0 {
+        if *cursor > 0 {
+            let ch = buf[..*cursor].chars().last().unwrap();
+            *cursor -= ch.len_utf8();
+        }
+    } else if *cursor < buf.len() {
+        let ch = buf[*cursor..].chars().next().unwrap();
+        *cursor += ch.len_utf8();
     }
 }
 

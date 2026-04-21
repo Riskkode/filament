@@ -1,6 +1,10 @@
+use super::{App, CanvasState, InputAction, Mode, StatusPageState, ArchiveState, move_cursor_in_buf};
+use crate::models::node::{Node, TimeTag};
+use crate::models::archive_note::ArchiveNote;
+
 use std::collections::HashMap;
-use super::{App, CanvasState, InputAction, Mode};
-use crate::models::node::Node;
+use chrono::{Local, Utc};
+use chrono_english::{parse_date_string, Dialect};
 
 impl App {
     // ── Sub-state transitions ─────────────────────────────────────────────────
@@ -21,6 +25,8 @@ impl App {
 
         if is_browse {
             if let Some(id) = self.node_near_cursor(self.cursor_x, self.cursor_y) {
+                // Cannot pick managed nodes
+                if self.nodes[id].managed.is_some() { return; }
                 self.push_undo();
                 let (ox, oy) = (self.nodes[id].world_x, self.nodes[id].world_y);
                 self.mode = Mode::Canvas {
@@ -121,9 +127,12 @@ impl App {
             let id = self.nodes.len();
             self.nodes.push(Node {
                 label: buf, parent: None, children: vec![], links: vec![],
-                tags: HashMap::new(),
                 collapsed: false, row: usize::MAX,
                 world_x: self.cursor_x, world_y: self.cursor_y, world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: None,
             });
             self.selected = id;
             // Chain straight into insert-child so editing continues normally.
@@ -131,6 +140,7 @@ impl App {
                 action: InputAction::InsertChild { parent: id },
                 buf: String::new(),
                 cursor: 0,
+                previous: Box::new(Mode::Canvas { state: CanvasState::Browse }),
             };
         } else {
             self.mode = Mode::Canvas { state: CanvasState::Browse };
@@ -146,6 +156,330 @@ impl App {
         self.mode = Mode::Canvas { state: CanvasState::Link { origin_id } };
     }
 
+    /// `s` — enter Status Tagging state from the currently selected node.
+    pub fn canvas_start_status_tagging(&mut self) {
+        if let Mode::StatusPage { state: StatusPageState::Browse { group_idx, item_idx: Some(item_idx) } } = &self.mode {
+            let nodes = self.get_query_results(*group_idx);
+            if let Some(&node_id) = nodes.get(*item_idx) {
+                self.selected = node_id;
+            } else { return; }
+        } else if !self.has_selection() {
+            return;
+        }
+        self.mode = Mode::TagStatus { previous: Box::new(self.mode.clone()) };
+    }
+
+    /// Set or clear the "status" tag on the currently selected node.
+    pub fn canvas_set_status(&mut self, status: Option<&str>) {
+        let previous = if let Mode::TagStatus { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else if let Mode::TagTime { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else if let Mode::TagTimeClear { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else {
+            None
+        };
+
+        let id = self.selected;
+        self.push_undo();
+        if let Some(s) = status {
+            self.nodes[id].tags.insert("status".to_string(), s.to_string());
+        } else {
+            self.nodes[id].tags.remove("status");
+        }
+        
+        if let Some(prev) = previous {
+            self.mode = *prev;
+        } else {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+        }
+        self.save_project();
+    }
+
+    /// `t` — enter Time Tagging state from the currently selected node.
+    pub fn canvas_start_time_tagging(&mut self) {
+        if let Mode::StatusPage { state: StatusPageState::Browse { group_idx, item_idx: Some(item_idx) } } = &self.mode {
+            let nodes = self.get_query_results(*group_idx);
+            if let Some(&node_id) = nodes.get(*item_idx) {
+                self.selected = node_id;
+            } else { return; }
+        } else if !self.has_selection() {
+            return;
+        }
+        self.mode = Mode::TagTime { previous: Box::new(self.mode.clone()) };
+    }
+
+    pub fn canvas_start_time_input(&mut self, time_type: &str) {
+        let previous = if let Mode::TagTime { previous, .. } = &self.mode {
+            previous.clone()
+        } else {
+            Box::new(self.mode.clone())
+        };
+
+        self.mode = Mode::TimeInput { 
+            time_type: time_type.to_string(), 
+            buf: String::new(), 
+            cursor: 0,
+            previous
+        };
+    }
+
+    pub fn canvas_time_char(&mut self, c: char) {
+        if let Mode::TimeInput { ref mut buf, ref mut cursor, .. } = self.mode {
+            buf.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+    }
+
+    pub fn canvas_time_backspace(&mut self) {
+        if let Mode::TimeInput { ref mut buf, ref mut cursor, .. } = self.mode {
+            if *cursor > 0 {
+                let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                buf.drain(prev..*cursor);
+                *cursor = prev;
+            }
+        }
+    }
+
+    pub fn canvas_time_move_cursor(&mut self, delta: i32) {
+        if let Mode::TimeInput { ref buf, ref mut cursor, .. } = self.mode {
+            move_cursor_in_buf(buf, cursor, delta);
+        }
+    }
+
+    pub fn canvas_confirm_time(&mut self) {
+        let (time_type, buf, previous) = match &self.mode {
+            Mode::TimeInput { time_type, buf, previous, .. } => (time_type.clone(), buf.clone(), previous.clone()),
+            _ => return,
+        };
+
+        if !self.has_selection() {
+            self.mode = *previous;
+            return;
+        }
+
+        let now = Local::now();
+        
+        let parse_buf = if time_type == "recurring" {
+            buf.to_lowercase().replace("every", "next")
+        } else {
+            buf.clone()
+        };
+
+        // chrono-english::parse_date_string parses relative dates like "tomorrow"
+        match parse_date_string(&parse_buf, now, Dialect::Uk) {
+            Ok(dt) => {
+                let id = self.selected;
+                self.push_undo();
+                let timestamp = if time_type == "duration" {
+                    dt.timestamp() - now.timestamp()
+                } else {
+                    dt.with_timezone(&Utc).timestamp()
+                };
+                
+                let pattern = if time_type == "recurring" {
+                    Some(buf.clone())
+                } else {
+                    None
+                };
+
+                self.nodes[id].times.insert(time_type, TimeTag { timestamp, pattern });
+                self.sync_managed_nodes();
+
+                self.mode = *previous;
+                self.save_project();
+            }
+            Err(_) => {
+                self.status_message = Some("Invalid date/time format".to_string());
+            }
+        }
+    }
+
+    pub fn canvas_set_time(&mut self, time_type: Option<&str>) {
+        let previous = if let Mode::TagTime { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else if let Mode::TagTimeClear { previous, .. } = &self.mode {
+            Some(previous.clone())
+        } else {
+            None
+        };
+
+        if !self.has_selection() {
+            if let Some(prev) = previous {
+                self.mode = *prev;
+            } else {
+                self.mode = Mode::Canvas { state: CanvasState::Browse };
+            }
+            return;
+        }
+        let id = self.selected;
+        self.push_undo();
+        if let Some(t) = time_type {
+            self.nodes[id].times.remove(t);
+        } else {
+            self.nodes[id].times.clear();
+        }
+        self.sync_managed_nodes();
+        if let Some(prev) = previous {
+            self.mode = *prev;
+        } else {
+            self.mode = Mode::Canvas { state: CanvasState::Browse };
+        }
+        self.save_project();
+    }
+
+    /// `n` — enter Note association state from the currently selected node.
+    pub fn canvas_start_note_association(&mut self) {
+        if !self.has_selection() { return; }
+        // We always start a fresh buffer for a NEW managed child note.
+        self.mode = Mode::NoteInput {
+            buf: String::new(),
+            cursor: 0,
+            note_type: crate::models::archive_note::NoteType::Quick,
+            previous: Box::new(self.mode.clone()),
+        };
+    }
+
+    pub fn canvas_note_char(&mut self, c: char) {
+        if let Mode::NoteInput { ref mut buf, ref mut cursor, .. } = self.mode {
+            buf.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+    }
+
+    pub fn canvas_note_backspace(&mut self) {
+        if let Mode::NoteInput { ref mut buf, ref mut cursor, .. } = self.mode {
+            if *cursor > 0 {
+                let prev = buf[..*cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                buf.drain(prev..*cursor);
+                *cursor = prev;
+            }
+        }
+    }
+
+    pub fn canvas_note_move_cursor(&mut self, delta: i32) {
+        if let Mode::NoteInput { ref buf, ref mut cursor, .. } = self.mode {
+            move_cursor_in_buf(buf, cursor, delta);
+        }
+    }
+
+    pub fn canvas_confirm_note(&mut self) {
+        let (buf, note_type, previous) = match &self.mode {
+            Mode::NoteInput { buf, note_type, previous, .. } => (buf.clone(), *note_type, previous.clone()),
+            _ => return,
+        };
+
+        if !self.has_selection() {
+            self.mode = *previous;
+            return;
+        }
+
+        let parent_id = self.selected;
+        let trimmed = buf.trim();
+        if !trimmed.is_empty() {
+            self.push_undo();
+            let note_title = trimmed.to_string();
+            
+            // 1. Ensure note exists in archive
+            if let Some(existing_idx) = self.notes.iter().position(|n| n.title == note_title) {
+                self.notes[existing_idx].note_type = note_type;
+            } else {
+                self.notes.push(ArchiveNote { id: None, title: note_title.clone(), content: String::new(), note_type });
+            }
+
+            // 2. Create managed child node
+            let id = self.nodes.len();
+            self.nodes.push(Node {
+                label: note_title,
+                parent: Some(parent_id),
+                children: vec![],
+                links: vec![],
+                collapsed: false,
+                row: usize::MAX,
+                world_x: 0,
+                world_y: 0,
+                world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: true,
+                managed: None,
+            });
+            self.nodes[parent_id].children.push(id);
+
+            // 3. If it's a reference note, auto-generate for children
+            if note_type == crate::models::archive_note::NoteType::Reference {
+                let children_to_process: Vec<usize> = self.nodes[parent_id].children.iter()
+                    .cloned()
+                    .filter(|&cid| cid != id && !self.nodes[cid].is_managed_note)
+                    .collect();
+                
+                for cid in children_to_process {
+                    let child_label = self.nodes[cid].label.clone();
+                    // Avoid duplicate notes on the same node
+                    if !self.nodes[cid].children.iter().any(|&gcid| self.nodes[gcid].is_managed_note && self.nodes[gcid].label == child_label) {
+                        if !self.notes.iter().any(|n| n.title == child_label) {
+                            self.notes.push(ArchiveNote { 
+                                id: None, 
+                                title: child_label.clone(), 
+                                content: String::new(), 
+                                note_type: crate::models::archive_note::NoteType::Reference 
+                            });
+                        }
+                        
+                        let new_note_node_idx = self.nodes.len();
+                        self.nodes.push(Node {
+                            label: child_label,
+                            parent: Some(cid),
+                            children: vec![],
+                            links: vec![],
+                            collapsed: false,
+                            row: usize::MAX,
+                            world_x: 0,
+                            world_y: 0,
+                            world_x_end: 0,
+                            tags: HashMap::new(),
+                            times: HashMap::new(),
+                            is_managed_note: true,
+                            managed: None,
+                        });
+                        self.nodes[cid].children.push(new_note_node_idx);
+                    }
+                }
+            }
+            self.selected = id; // Focus the new note node
+        }
+        
+        self.mode = *previous;
+        self.save_project();
+        self.recompute_layout();
+    }
+
+    pub fn canvas_open_note(&mut self) {
+        if !self.has_selection() { return; }
+        let id = self.selected;
+        if self.nodes[id].is_managed_note {
+            let title = &self.nodes[id].label;
+            if let Some(idx) = self.notes.iter().position(|n| n.title == *title) {
+                let note = &self.notes[idx];
+                if note.note_type == crate::models::archive_note::NoteType::Reference {
+                    self.mode = Mode::ArchivePage {
+                        state: ArchiveState::BrowseDocument { note_idx: idx, doc_idx: 0 },
+                        previous: Box::new(self.mode.clone())
+                    };
+                } else {
+                    self.mode = Mode::ArchivePage {
+                        state: ArchiveState::EditContent {
+                            idx,
+                            buf: note.content.clone(),
+                            cursor: note.content.len()
+                        },
+                        previous: Box::new(self.mode.clone())
+                    };
+                }
+            }
+        }
+    }
     /// Enter — toggle the link between origin and the node nearest the cursor.
     /// Creates the link if absent, removes it if already present.
     /// Does nothing if the cursor is on the origin itself or empty space.
@@ -332,12 +666,15 @@ impl App {
                 parent,
                 children: vec![],
                 links: vec![],
-                tags: HashMap::new(),
                 collapsed: false,
                 row: usize::MAX,
                 world_x: 0,
                 world_y: 0,
                 world_x_end: 0,
+                tags: HashMap::new(),
+                times: HashMap::new(),
+                is_managed_note: false,
+                managed: None,
             });
             if let Some(p) = parent { nodes[p].children.push(id); }
             id
@@ -351,9 +688,9 @@ impl App {
         add_help_node(&mut self.nodes, "Tab / S-Tab   : Cycle through outgoing links", Some(nav));
         add_help_node(&mut self.nodes, "c             : Center camera on selection", Some(nav));
         add_help_node(&mut self.nodes, "g             : Goto (fuzzy search nodes)", Some(nav));
+        add_help_node(&mut self.nodes, "/             : Toggle note previews", Some(nav));
 
-        let ops = add_help_node(&mut self.nodes, "Operations", Some(root));
-        add_help_node(&mut self.nodes, "i             : Insert new child", Some(ops));
+        let ops = add_help_node(&mut self.nodes, "Operations", Some(root));        add_help_node(&mut self.nodes, "i             : Insert new child", Some(ops));
         add_help_node(&mut self.nodes, "n             : New root node at cursor", Some(ops));
         add_help_node(&mut self.nodes, "e             : Edit label (append)", Some(ops));
         add_help_node(&mut self.nodes, "E (Shift)     : Edit label (overwrite)", Some(ops));

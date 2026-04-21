@@ -1,18 +1,38 @@
-use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState};
-use crate::ui::palette as pal;
+use crate::app::{App, ArrowFidelity, CanvasState, InputAction, Mode, StartMenuState, StatusPageState, ArchiveState};
+use crate::ui::palette::Palette;
 use crate::ui::prefix::{box_prefix, compute_insert_trail, compute_is_last};
 use crate::ui::titlebar;
 use crate::ui::widgets::{route_link_into_buf, ArrowBuf, put_char};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::Rect,
-    style::{Color, Style},
+    layout::{Rect, Layout, Constraint, Direction},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
     Terminal,
 };
 use std::collections::HashSet;
 use std::io;
+use chrono::{Local, TimeZone};
+
+fn format_duration(seconds: i64) -> String {
+    let mut s = seconds.abs();
+    let days = s / 86400;
+    s %= 86400;
+    let hours = s / 3600;
+    s %= 3600;
+    let minutes = s / 60;
+    let secs = s % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 { parts.push(format!("{}d", days)); }
+    if hours > 0 { parts.push(format!("{}h", hours)); }
+    if minutes > 0 { parts.push(format!("{}m", minutes)); }
+    if secs > 0 || parts.is_empty() { parts.push(format!("{}s", secs)); }
+    
+    let joined = parts.join(" ");
+    if seconds < 0 { format!("-{}", joined) } else { joined }
+}
 
 pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     if matches!(&app.mode, Mode::StartMenu { .. }) {
@@ -36,8 +56,8 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(titlebar::border_style(&app.mode, &app.palette))
-                .title(titlebar::build_title(&app.mode, &app.palette)),
+                .border_style(titlebar::border_style(&app.palette, &app.mode))
+                .title(titlebar::build_title(&app.palette, &app.mode)),
             area,
         );
 
@@ -49,8 +69,6 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         };
 
         // ── Global arrow layer ────────────────────────────────────────────────
-        // When Global is on, render every visible link in a dim colour first so
-        // the graph structure is always visible behind the highlighted subset.
         if app.arrow.global {
             let mut global_buf = ArrowBuf::new();
             for node in app.nodes.iter() {
@@ -67,11 +85,10 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     }
                 }
             }
-            global_buf.flush(frame, canvas, pal::tinted(app.palette.arrow_dim));
+            global_buf.flush(frame, canvas, app.palette.tinted(app.palette.arrow_dim));
         }
 
         // ── Highlighted arrow layer ───────────────────────────────────────────
-        // Draws the subset of arrows determined by incoming/outgoing fidelity.
         if app.has_selection() {
             let mut root = app.selected;
             while let Some(p) = app.nodes[root].parent { root = p; }
@@ -87,7 +104,6 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 ArrowFidelity::Selected => HashSet::from([app.selected]),
             };
 
-            // Collect (src, tgt) pairs, deduplicated.
             let mut pairs: HashSet<(usize, usize)> = HashSet::new();
             for &src_id in &out_sources {
                 for &tgt_id in &app.nodes[src_id].links {
@@ -119,7 +135,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     app.nodes[tgt_id].world_x_end,
                 );
             }
-            arrow_buf.flush(frame, canvas, pal::tinted(app.palette.link_arrow));
+            arrow_buf.flush(frame, canvas, app.palette.tinted(app.palette.link_arrow));
         }
 
         // ── Link mode preview arrow ───────────────────────────────────────────
@@ -133,7 +149,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 app.nodes[origin_id].world_x_end,
                 app.cursor_x, app.cursor_y, app.cursor_x,
             );
-            prev.flush(frame, canvas, pal::tinted(app.palette.link));
+            prev.flush(frame, canvas, app.palette.tinted(app.palette.link));
         }
 
         // ── Bullet lists ──────────────────────────────────────────────────────
@@ -159,6 +175,14 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 else if node.collapsed { format!("  [+{}]", node.children.len()) }
                 else { String::new() };
 
+            let status_span = match node.tags.get("status").map(|s| s.as_str()) {
+                Some("todo")        => Span::styled("○ ", Style::default().fg(app.palette.status_todo)),
+                Some("in_progress") => Span::styled("● ", Style::default().fg(app.palette.status_progress)),
+                Some("completed")   => Span::styled("● ", Style::default().fg(app.palette.status_done)),
+                Some("blocked")     => Span::styled("⊘ ", Style::default().fg(app.palette.status_blocked)),
+                _ => Span::raw(""),
+            };
+
             let is_reparent_subj = matches!(&app.mode, Mode::Reparent { subject, .. } if *subject == id);
             let is_reparent_cur  = matches!(&app.mode, Mode::Reparent { cursor,  .. } if *cursor  == id);
             let is_insert_parent = matches!(&app.mode,
@@ -168,30 +192,77 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let is_link_origin   = matches!(&app.mode,
                 Mode::Canvas { state: CanvasState::Link { origin_id } } if *origin_id == id);
 
-            let label_style = if is_reparent_subj || is_pick_origin {
-                pal::solid(app.palette.pick)
+            let label_style = if node.managed.is_some() {
+                app.palette.tinted(app.palette.edit).add_modifier(Modifier::ITALIC)
+            } else if is_reparent_subj || is_pick_origin {
+                app.palette.solid(app.palette.pick)
             } else if is_link_origin {
-                pal::solid(app.palette.link)
+                app.palette.solid(app.palette.link)
             } else if is_reparent_cur {
-                pal::solid(app.palette.reparent)
+                app.palette.solid(app.palette.reparent)
             } else if is_insert_parent {
-                pal::solid(app.palette.insert)
+                app.palette.solid(app.palette.insert)
             } else if app.has_selection() && id == app.selected {
-                pal::solid(app.palette.selected)
+                app.palette.solid(app.palette.selected)
             } else {
-                pal::tinted(app.palette.node)
+                app.palette.tinted(app.palette.node)
             };
 
+            let indicator = if app.selected == id { ">" } else { " " };
+
+            let mut spans = vec![
+                Span::styled(prefix,             Style::default().fg(app.palette.prefix)),
+                Span::styled(format!("{} ", indicator), Style::default().fg(app.palette.dim)),
+                status_span,
+            ];
+
+            if node.is_managed_note {
+                let note_type = app.notes.iter()
+                    .find(|n| n.title == node.label)
+                    .map(|n| n.note_type)
+                    .unwrap_or(crate::models::archive_note::NoteType::Quick);
+                
+                let (icon, color) = match note_type {
+                    crate::models::archive_note::NoteType::Quick => ("🗒 ", app.palette.insert),
+                    crate::models::archive_note::NoteType::Reference => ("📚 ", app.palette.reparent),
+                };
+                spans.push(Span::styled(icon, Style::default().fg(color)));
+            }
+
+            spans.push(Span::styled(node.label.clone(), label_style));
+            spans.push(Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)));
+
+            // Render time tags summary only if collapsed
+            if node.collapsed {
+                let mut time_keys: Vec<_> = node.times.keys().cloned().collect();
+                time_keys.sort();
+                for key in time_keys {
+                    if let Some(tag) = node.times.get(&key) {
+                        let val_str = if key == "duration" {
+                            format_duration(tag.timestamp)
+                        } else {
+                            let dt = Local.timestamp_opt(tag.timestamp, 0).unwrap();
+                            let date_str = dt.format("%Y-%m-%d").to_string();
+                            if let Some(ref pattern) = tag.pattern {
+                                format!("{} ({})", date_str, pattern)
+                            } else {
+                                date_str
+                            }
+                        };
+                        spans.push(Span::styled(
+                            format!(" [{}: {}]", key, val_str), 
+                            Style::default().fg(app.palette.dim).add_modifier(Modifier::ITALIC)
+                        ));
+                    }
+                }
+            }
+
             frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(prefix,             Style::default().fg(app.palette.prefix)),
-                    Span::styled("> ",               Style::default().fg(app.palette.dim)),
-                    Span::styled(node.label.clone(), label_style),
-                    Span::styled(collapse_suffix,    Style::default().fg(app.palette.dim)),
-                ])),
+                Paragraph::new(Line::from(spans)),
                 Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
             );
-        }
+            }
+
 
         // ── Canvas cursor ─────────────────────────────────────────────────────
         if let Mode::Canvas { ref state } = app.mode {
@@ -201,8 +272,8 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
                     let (ch, style) = match state {
-                        CanvasState::Pick { .. } => ('⊕', pal::solid(app.palette.pick)),
-                        _                        => ('╋', pal::tinted_bold(app.palette.canvas)),
+                        CanvasState::Pick { .. } => ('⊕', app.palette.solid(app.palette.pick)),
+                        _                        => ('╋', app.palette.tinted_bold(app.palette.canvas)),
                     };
                     put_char(frame, canvas, sx, sy, ch, style);
                 }
@@ -221,7 +292,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 origin_x, origin_y, ox_end,
                 app.cursor_x, app.cursor_y, app.cursor_x,
             );
-            pick_buf.flush(frame, canvas, pal::tinted(app.palette.pick));
+            pick_buf.flush(frame, canvas, app.palette.tinted(app.palette.pick));
         }
 
         // ── Canvas new-node inline prompt ─────────────────────────────────────
@@ -233,13 +304,13 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             if sx >= 0 && sy >= 0 {
                 let (sx, sy) = (sx as u16, sy as u16);
                 if sx < canvas.width && sy < canvas.height {
-                    render_input_line(frame, canvas, sx, sy, "> ", buf, text_cursor, app.palette.insert, &app.palette);
+                    render_input_line(frame, canvas, sx, sy, "> ", buf, text_cursor, &app.palette, app.palette.insert);
                 }
             }
         }
 
         // ── Insert inline prompt ──────────────────────────────────────────────
-        if let Mode::Input { action: InputAction::InsertChild { parent }, ref buf, cursor } = app.mode {
+        if let Mode::Input { action: InputAction::InsertChild { parent }, ref buf, cursor, .. } = app.mode {
             let subtree = app.collect_subtree(parent);
             let visible = subtree.iter().filter(|&&id| app.nodes[id].row != usize::MAX).count();
             let wy = app.nodes[parent].world_y + visible as i32;
@@ -251,7 +322,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 if sx < canvas.width && sy < canvas.height {
                     let trail  = compute_insert_trail(&app.nodes, parent);
                     let prefix = format!("{}>  ", box_prefix(&trail));
-                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, app.palette.insert, &app.palette);
+                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, &app.palette, app.palette.insert);
                 }
             }
         }
@@ -259,7 +330,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         // ── Edit inline prompt ────────────────────────────────────────────────
         if let Mode::Input {
             action: InputAction::EditLabel { node } | InputAction::Overwrite { node },
-            ref buf, cursor
+            ref buf, cursor, ..
         } = app.mode {
             let sx = app.nodes[node].world_x - app.camera_x;
             let sy = app.nodes[node].world_y - app.camera_y;
@@ -270,12 +341,12 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     let depth = order.get(idx).map(|&(_, d)| d).unwrap_or(0);
                     let trail = build_trail_for(&order, &is_last, idx, depth);
                     let prefix = format!("{}>  ", box_prefix(&trail));
-                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, app.palette.edit, &app.palette);
+                    render_input_line(frame, canvas, sx, sy, &prefix, buf, cursor, &app.palette, app.palette.edit);
                 }
             }
         }
 
-        // ── Canvas pick result label overlay ──────────────────────────────────
+        // ── Canvas new-node inline prompt ─────────────────────────────────────
         if let Mode::Canvas { state: CanvasState::Pick { origin_id, origin_x, origin_y, .. } } = app.mode {
             let sx = origin_x - app.camera_x;
             let sy = origin_y - app.camera_y;
@@ -284,7 +355,7 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 if sx < canvas.width && sy < canvas.height {
                     let label = &app.nodes[origin_id].label;
                     frame.render_widget(
-                        Paragraph::new(Span::styled(label.clone(), pal::solid(app.palette.pick))),
+                        Paragraph::new(Span::styled(label.clone(), app.palette.solid(app.palette.pick))),
                         Rect { x: canvas.x + sx, y: canvas.y + sy, width: label.chars().count() as u16, height: 1 }
                     );
                 }
@@ -299,19 +370,51 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 format!("({}/{})", match_idx + 1, matches.len())
             };
             let prefix = format!("jump to: {} ", matches_info);
-            render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), &prefix, buf, cursor, app.palette.edit, &app.palette);
+            render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), &prefix, buf, cursor, &app.palette, app.palette.edit);
         }
 
         // ── Pick modal prompt ────────────────────────────────────────────────
         if let Mode::Canvas { state: CanvasState::Pick { ref buf, cursor, .. } } = app.mode {
             if !buf.is_empty() {
                 let prefix = "move to: ";
-                render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), prefix, buf, cursor, app.palette.insert, &app.palette);
+                render_input_line(frame, canvas, 0, canvas.height.saturating_sub(1), prefix, buf, cursor, &app.palette, app.palette.insert);
             }
         }
 
         // ── Arrow settings menu overlay ───────────────────────────────────────
         draw_arrow_menu(frame, canvas, app);
+
+        // ── Modal overlays ───────────────────────────────────────────────────
+        if let Mode::ContextSwitcher { .. } = &app.mode {
+            draw_context_switcher(frame, area, app);
+        }
+
+        // ── Note Preview (PiP) ────────────────────────────────────────────────
+        if app.has_selection() && app.show_note_previews {
+            let selected_node = &app.nodes[app.selected];
+
+            let preview_height = (canvas.height / 3).max(10).min(20);
+            let max_notes = (canvas.height / preview_height) as usize;
+
+            let notes_to_show: Vec<_> = if selected_node.is_managed_note {
+                app.notes.iter()
+                    .filter(|n| n.title == selected_node.label && n.note_type == crate::models::archive_note::NoteType::Quick)
+                    .take(max_notes)
+                    .collect()
+            } else {
+                // If it's a regular node, show up to max_notes linked Quick note children.
+                selected_node.children.iter()
+                    .map(|&cid| &app.nodes[cid])
+                    .filter(|n| n.is_managed_note)
+                    .filter_map(|mn| app.notes.iter().find(|n| n.title == mn.label && n.note_type == crate::models::archive_note::NoteType::Quick))
+                    .take(max_notes)
+                    .collect()
+            };
+
+            for (i, note) in notes_to_show.into_iter().enumerate() {
+                draw_note_preview(frame, canvas, note, &app.palette, i as u16);
+            }
+        }
 
         // ── Status bar ────────────────────────────────────────────────────────
         let status = build_status(app);
@@ -321,6 +424,83 @@ pub fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         );
     })?;
     Ok(())
+}
+
+pub(crate) fn draw_context_switcher(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let Mode::ContextSwitcher { selected, .. } = app.mode else { return };
+
+    let width = 40u16;
+    let height = 5u16;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect { x, y, width, height };
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Context Switcher ")
+            .border_style(Style::default().fg(app.palette.edit)),
+        popup_area,
+    );
+
+    let options = [
+        ("f", "Filaments", 0),
+        ("s", "Status",    1),
+        ("a", "Archive",   2),
+    ];
+
+    let list_area = popup_area.inner(ratatui::layout::Margin { horizontal: 2, vertical: 1 });
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(33)])
+        .split(list_area);
+
+    for (i, (key, label, idx)) in options.iter().enumerate() {
+        let style = if selected == *idx {
+            app.palette.solid(app.palette.selected)
+        } else {
+            app.palette.tinted(app.palette.node)
+        };
+
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!("[{}] ", key), Style::default().fg(app.palette.insert).add_modifier(Modifier::BOLD)),
+                Span::styled(*label, style),
+            ])),
+            chunks[i],
+        );
+    }
+}
+
+fn draw_note_preview(frame: &mut ratatui::Frame, canvas: Rect, note: &crate::models::archive_note::ArchiveNote, pal: &Palette, index: u16) {
+    let width = (canvas.width / 3).max(30).min(60);
+    let height = (canvas.height / 3).max(10).min(20);
+    
+    // Position bottom-right with some margin, stack upwards based on index
+    let x = canvas.x + canvas.width.saturating_sub(width);
+    let y = (canvas.y + canvas.height).saturating_sub(height * (index + 1));
+    
+    let popup_area = Rect { x, y, width, height };
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(format!(" 🗒 {} ", note.title))
+            .border_style(Style::default().fg(pal.insert)),
+        popup_area,
+    );
+
+    let inner = popup_area.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+    frame.render_widget(
+        Paragraph::new(note.content.as_str())
+            .style(Style::default().fg(pal.node))
+            .wrap(ratatui::widgets::Wrap { trim: true }),
+        inner,
+    );
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -346,20 +526,20 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
     };
 
     let incoming_style = if matches!(&app.mode, Mode::Canvas { state: CanvasState::MenuIncoming }) {
-        pal::solid(app.palette.link_arrow)
+        app.palette.solid(app.palette.link_arrow)
     } else {
-        pal::tinted(app.palette.link_arrow)
+        app.palette.tinted(app.palette.link_arrow)
     };
     let outgoing_style = if matches!(&app.mode, Mode::Canvas { state: CanvasState::MenuOutgoing }) {
-        pal::solid(app.palette.link_arrow)
+        app.palette.solid(app.palette.link_arrow)
     } else {
-        pal::tinted(app.palette.link_arrow)
+        app.palette.tinted(app.palette.link_arrow)
     };
 
     let lines = vec![
         Line::from(vec![
             Span::raw(" [g] Global   "),
-            Span::styled(tog(app.arrow.global), pal::tinted(app.palette.link_arrow)),
+            Span::styled(tog(app.arrow.global), app.palette.tinted(app.palette.link_arrow)),
         ]),
         Line::from(vec![
             Span::raw(" [i] Incoming "),
@@ -383,18 +563,23 @@ fn draw_arrow_menu(frame: &mut ratatui::Frame, canvas: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .title(" Arrow Display ")
-                .border_style(pal::tinted(app.palette.canvas))),
+                .border_style(app.palette.tinted(app.palette.canvas))),
         Rect { x, y, width: w, height: h },
     );
 }
 
-fn render_input_line(
-    frame: &mut ratatui::Frame,
-    canvas: Rect, sx: u16, sy: u16,
-    prefix: &str, buf: &str, cursor: usize,
-    color: Color,
-    palette: &pal::Palette,
+pub fn render_input_line(
+    frame:  &mut ratatui::Frame,
+    canvas: Rect,
+    sx:     u16,
+    sy:     u16,
+    prefix: &str,
+    buf:    &str,
+    cursor: usize,
+    pal:    &Palette,
+    color:  Color,
 ) {
+
     let before    = &buf[..cursor];
     let cur_char  = buf[cursor..].chars().next().unwrap_or(' ');
     let after_off = cursor + cur_char.len_utf8();
@@ -403,10 +588,10 @@ fn render_input_line(
     let reset_bg = Style::default().bg(Color::Reset);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(prefix.to_string(),      reset_bg.patch(Style::default().fg(palette.dim))),
-            Span::styled(before.to_string(),       reset_bg.patch(pal::tinted(color))),
-            Span::styled(cur_char.to_string(),     pal::solid(color)),
-            Span::styled(after.to_string(),        reset_bg.patch(pal::tinted(color))),
+            Span::styled(prefix.to_string(),      reset_bg.patch(Style::default().fg(pal.dim))),
+            Span::styled(before.to_string(),       reset_bg.patch(pal.tinted(color))),
+            Span::styled(cur_char.to_string(),     pal.solid(color)),
+            Span::styled(after.to_string(),        reset_bg.patch(pal.tinted(color))),
         ])),
         Rect { x: canvas.x + sx, y: canvas.y + sy, width: canvas.width.saturating_sub(sx), height: 1 },
     );
@@ -423,7 +608,7 @@ fn build_trail_for(order: &[(usize, usize)], is_last: &[bool], idx: usize, depth
     trail
 }
 
-fn build_status(app: &App) -> String {
+pub fn build_status(app: &App) -> String {
     match &app.mode {
         Mode::StartMenu { state: StartMenuState::Main { selected } } => {
             if let Some(n) = app.nodes.get(*selected) {
@@ -446,7 +631,7 @@ fn build_status(app: &App) -> String {
             format!(" editing {}: \"{}\" ", key.replace('_', " "), buf),
         Mode::StartMenu { state: StartMenuState::Import { buf, matches, root, editing_root, .. } } => {
             let mode = if *editing_root { "editing location" } else { "fuzzy search" };
-            format!(" import from {} │ {}: \"{}\" │ {} matches │ up/down:nav  Tab:toggle mode ", root, mode, buf, matches.len())
+            format!(" import from {} │ {}: \"{}\" │ {} matches │ up/down:nav  Tab:change location  Enter:import  Esc:cancel ", root, mode, buf, matches.len())
         }
         Mode::Input { action: InputAction::InsertChild { parent }, buf, .. } =>
             format!(" inserting under \"{}\" │ \"{}\" ", app.nodes[*parent].label, buf),
@@ -454,6 +639,27 @@ fn build_status(app: &App) -> String {
             format!(" editing \"{}\" → \"{}\" ", app.nodes[*node].label, buf),
         Mode::Reparent { subject, cursor, .. } =>
             format!(" reparenting \"{}\" → child of \"{}\" ", app.nodes[*subject].label, app.nodes[*cursor].label),
+        Mode::ContextSwitcher { selected, .. } =>
+            format!(" Context: {} │ Space:toggle  hjkl:navigate  Enter:confirm  shortcuts: f s a ", if *selected == 0 { "Filaments" } else if *selected == 1 { "Status" } else { "Archive" }),
+        Mode::StatusPage { state: sps } => {
+            match sps {
+                StatusPageState::Browse { .. } => " Status Page │ n:new group  x:delete node  X:delete group  Space:context switcher ".to_string(),
+                StatusPageState::NewQueryName { .. } => " enter group name  Enter:next  Esc:cancel ".to_string(),
+                StatusPageState::NewQueryLogic { .. } => " enter query (e.g. status:todo AND deadline < tomorrow)  Enter:save  Esc:cancel ".to_string(),
+                _ => " Status Page ".to_string(),
+            }
+        }
+        Mode::ArchivePage { state: as_state, .. } => {
+            match as_state {
+                ArchiveState::BrowseList { selected } => {
+                    let note = app.notes.get(*selected).map(|n| n.title.as_str()).unwrap_or("none");
+                    format!(" Archive │ selected: \"{}\" │ n:new  e:edit  x:delete  Space:switcher ", note)
+                }
+                ArchiveState::BrowseDocument { .. } => " Document View │ hjkl:nav  Enter:edit  Esc:back ".to_string(),
+                ArchiveState::EditTitle { buf, .. } => format!(" editing title: \"{}\" ", buf),
+                ArchiveState::EditContent { .. } => " editing content │ Esc:save & exit │ Ctrl-g: jump to @mention ".to_string(),
+            }
+        }
         Mode::Canvas { state: CanvasState::Menu | CanvasState::MenuIncoming | CanvasState::MenuOutgoing } =>
             format!(" arrow display │ global {} │ incoming {} │ outgoing {} ",
                 if app.arrow.global { "ON" } else { "off" },
@@ -488,6 +694,21 @@ fn build_status(app: &App) -> String {
         }
         Mode::Canvas { state: CanvasState::Goto { buf, .. } } =>
             format!(" finding node: \"{}\" ", buf),
+        Mode::TagStatus { .. } =>
+            " status tag │ t:todo  p:progress  c:done  b:blocked  x:clear  Esc:cancel ".to_string(),
+        Mode::TagTime { .. } =>
+            " time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  x:clear...  Esc:cancel ".to_string(),
+        Mode::TagTimeClear { .. } =>
+            " clear time tag │ d:deadline  s:start  e:end  c:checkpoint  u:duration  r:recurring  a/x:all  Esc:back ".to_string(),
+        Mode::TimeInput { time_type, buf, .. } =>
+            format!(" enter {} │ \"{}\" ", time_type, buf),
+        Mode::NoteInput { buf, note_type, .. } => {
+            let type_str = match note_type {
+                crate::models::archive_note::NoteType::Quick => "Quick",
+                crate::models::archive_note::NoteType::Reference => "Reference",
+            };
+            format!(" enter {} note title │ \"{}\"  (Tab to toggle type) ", type_str, buf)
+        }
         Mode::Help =>
             " Browsing Help tree │ hjkl:navigate  z:toggle  Esc/?:close ".to_string(),
     }
@@ -518,8 +739,8 @@ fn draw_start_menu(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(titlebar::border_style(&app.mode, &app.palette))
-                .title(titlebar::build_title(&app.mode, &app.palette)),
+                .border_style(titlebar::border_style(&app.palette, &app.mode))
+                .title(titlebar::build_title(&app.palette, &app.mode)),
             area,
         );
 
@@ -553,6 +774,7 @@ fn draw_start_menu(
         let menu_w = max_node_w.min(inner.width.saturating_sub(4));
         let menu_x = banner_x;
         let menu_y = banner_y + banner_h + 2;
+        let visible_height = inner.height.saturating_sub(banner_h + 4);
 
         let mut trail: Vec<bool> = Vec::new();
         for (idx, &(id, depth)) in order.iter().enumerate() {
@@ -564,15 +786,23 @@ fn draw_start_menu(
                 else { *trail.last_mut().unwrap() = is_last[idx]; }
             }
 
+            // Scrolling logic
+            let wy = idx as i32;
+            let sy = wy - app.camera_y;
+            if sy < 0 || sy >= visible_height as i32 {
+                continue;
+            }
+            let sy = sy as u16;
+
             let prefix = box_prefix(&trail[..depth.min(trail.len())]);
             let collapse_suffix = if node.children.is_empty() { String::new() }
                 else if node.collapsed { format!("  [+{}]", node.children.len()) }
                 else { String::new() };
 
             let (indicator, style) = if app.selected == id {
-                (">", pal::solid(app.palette.selected))
+                (">", app.palette.solid(app.palette.selected))
             } else {
-                (" ", pal::tinted(app.palette.node))
+                (" ", app.palette.tinted(app.palette.node))
             };
 
             let label_lower = node.label.to_lowercase();
@@ -616,9 +846,9 @@ fn draw_start_menu(
                 let full_prefix = format!("{}{}{} ", prefix, indicator, input_prefix);
                 render_input_line(
                     frame,
-                    Rect { x: menu_x, y: menu_y + idx as u16, width: menu_w, height: 1 },
+                    Rect { x: menu_x, y: menu_y + sy, width: menu_w, height: 1 },
                     0, 0,
-                    &full_prefix, buf, cursor, color, &app.palette
+                    &full_prefix, buf, cursor, &app.palette, color
                 );
             } else {
                 frame.render_widget(
@@ -630,7 +860,7 @@ fn draw_start_menu(
                     ])),
                     Rect {
                         x: menu_x,
-                        y: menu_y + idx as u16,
+                        y: menu_y + sy,
                         width: menu_w,
                         height: 1
                     },
@@ -644,7 +874,7 @@ fn draw_start_menu(
                     Paragraph::new(Span::styled(shortcut_text, Style::default().fg(app.palette.insert))),
                     Rect {
                         x: banner_right_x.saturating_sub(shortcut_w),
-                        y: menu_y + idx as u16,
+                        y: menu_y + sy,
                         width: shortcut_w,
                         height: 1,
                     },
@@ -656,7 +886,7 @@ fn draw_start_menu(
         if let Mode::StartMenu { state: StartMenuState::Import { matches, match_idx, .. } } = &app.mode {
             let result_y = menu_y + order.len() as u16 + 1;
             for (i, path) in matches.iter().enumerate() {
-                let style = if i == *match_idx { pal::solid(app.palette.selected) } else { Style::default().fg(app.palette.dim) };
+                let style = if i == *match_idx { app.palette.solid(app.palette.selected) } else { Style::default().fg(app.palette.dim) };
                 frame.render_widget(
                     Paragraph::new(format!("  {} {}", if i == *match_idx { ">" } else { " " }, path)).style(style),
                     Rect { x: menu_x, y: result_y + i as u16, width: inner.width.saturating_sub(menu_x - inner.x), height: 1 }

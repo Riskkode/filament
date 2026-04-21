@@ -26,7 +26,7 @@ pub struct ProjectSettings {
     pub arrows: SavedArrows,
 }
 
-#[derive(Serialize, Deserialize, Default, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct ViewState {
     pub camera_x: i32,
     pub camera_y: i32,
@@ -34,6 +34,23 @@ pub struct ViewState {
     pub cursor_y: i32,
     /// DB row-id of the selected node, 0 = no selection.
     pub selected_db_id: i64,
+    #[serde(default = "default_true")]
+    pub show_note_previews: bool,
+}
+
+fn default_true() -> bool { true }
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            camera_x: 0,
+            camera_y: 0,
+            cursor_x: 0,
+            cursor_y: 0,
+            selected_db_id: 0,
+            show_note_previews: true,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
